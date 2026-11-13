@@ -1763,7 +1763,6 @@ cache; since #642 PR 6 the boards never read that cache: no layer reads as no ro
 | `sec/filings` | daily | `data.sec.gov/submissions/CIK*.json` when the daily index shows a new filing; the primary document of the newest 10-K (else 20-F) and DEF 14A, fetched once each; the list's company header (SEC SIC, state of incorporation, business address) | `stg_sec_filings`, `stg_sec_documents`, `stg_sec_segments`, `stg_sec_customers`, `stg_sec_header` |
 | `alphavantage/earnings_calendar` | daily | Alpha Vantage `EARNINGS_CALENDAR`, three months ahead, one request a run (`ALPHAVANTAGE_API_KEY`) | `stg_av_calendar` |
 | `uw/earnings` | weekly | UW `/stock/<ticker>/earnings`, one request per company: the quarterly rows' reported EPS, UW's consensus of that quarter and its surprise, as UW serves them | `stg_uw_earnings` |
-| `uw/financials` | daily | UW `/stock/<ticker>/financials` for a company that reported in the last 14 days and has not filed; off unless `RC_UW_PRELIMINARY=1` | `stg_uw_financials` |
 | `yfinance/estimates` | weekly | Yahoo's `earningsTrend` per company, its shortest ticker, when its newest answer is 7 days old; 5 failures in a row stop the run | `stg_yf_estimates` |
 | `yfinance/fx` | daily | Yahoo's daily close of `<CUR>USD=X` per currency in `fx_rates.CURRENCIES` (USD per unit), the whole history the first time, then from 7 days before the newest stored day | `stg_yf_fx` |
 | `sec/fsds` | monthly | The SEC's quarterly Financial Statement Data Sets zip, the newest quarter published | `stg_sec_fsds` |
@@ -1790,10 +1789,11 @@ tagged, and are added beside a whole long-term line only when that line is below
 by the next day's run (the run's note says `pending`), so a statement reaches the served table on its filing day or
 the day after, never months late (the Fundamentals review's F3).
 
-**Preliminary quarters** (`uw/financials`). Off unless `RC_UW_PRELIMINARY=1`: a run asks nothing and the tables
-build serves none of the stored rows. On, a quarter UW has and the SEC does not is served with `preliminary` true and
-no accession, only for a period ending more than 30 days after the company's newest SEC quarter; the 10-Q replaces it
-in the next build. Quarterly rows only, USD only, no total debt and no EPS.
+**Preliminary quarters: none.** The Unusual Whales preliminary-quarters dataset, which served a quarter UW had
+and the SEC did not, was removed on 12 Nov 2026 (#659): the assumption it rested on did not hold, UW's fundamentals being Alpha
+Vantage's. `fundamental_fact` keeps its `preliminary` column and the CHECK that goes with it — they are the
+table's shape, and changing it would bump the serving version and rebuild every file — but nothing writes a
+preliminary row any more.
 
 **WRDS is a check, not a served value.** Attended and monthly on the spine's one WRDS worker (one login, at most one
 Duo push per builder process): `python -m RevenueChaser.rcdata.build backfill wrds/fundq wrds/funda
@@ -1867,7 +1867,7 @@ served (`fundamentals_layer.reads_layer`). What each board reads there:
 
 | Board | Reads on the layer |
 |---|---|
-| Fundamentals | The statements, and on each card the filing and read days (F3); the 8-K flag from `filing_item`, its checked day the newer of the filing list's read day and `sec/filings`' newest good check (F2); ROIC, gross margin and net debt on the trailing year when the quarters give one (TTM, else the fiscal year, the basis named on the card); a UW preliminary quarter never enters TTM revenue or the P/E's net income |
+| Fundamentals | The statements, and on each card the filing and read days (F3); the 8-K flag from `filing_item`, its checked day the newer of the filing list's read day and `sec/filings`' newest good check (F2); ROIC, gross margin and net debt on the trailing year when the quarters give one (TTM, else the fiscal year, the basis named on the card) |
 | Asymmetric Growth | Growth, acceleration, margins, free cash flow, runway and dilution on three trailing years a year apart when the 10-Qs give them, else the fiscal years, one basis per card (`period_ends.basis`; review SF-4) |
 | Financials | The SEC's annual statements, the newest five (a line the SEC facts do not carry stays empty, so the engines' labelled default shows; EBITDA is operating income plus depreciation), unless Yahoo's newest year with revenue is newer, or is the same year and gives an input the SEC's lacks (depreciation, capex, working capital), when Yahoo's statements are modelled; the source line names what the SEC's statements lack either way (with the SEC's, the tax rate and interest expense, which the facts never carry, except for a bank, whose P/E model reads neither), and they end on the newest year with revenue; the price, market cap, shares and beta from the prices store (`module_financials/market_inputs.py`: the newest close, at most 14 days before today like the rate, its session named on the card and in the source line; the issuer's market cap, a fund's or a trust's its own; the cap over the price as the class-equivalent shares, only when both are of one session; and a 5-year monthly beta of split-adjusted price returns on `index:SPX`, at least 36 months), each Yahoo's where the store has none, and the source line names which side each came from (the comps' basis line names the shares' side; the EV stays Yahoo's and the card says so); the risk-free rate from `market_series` DGS10, at most 14 days old |
 | Relatedness | The newest annual report text `sec/filings` serves (Value Chain's splitter and cap, so the same filing gives the same input hash) and the layer's CIK; a profile's cache key and the payload carry the filing it was read from (CIK, accession, form, filed) |

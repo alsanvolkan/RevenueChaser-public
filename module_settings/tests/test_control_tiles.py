@@ -51,7 +51,7 @@ def test_the_longest_build_today_is_measured_from_the_runs_of_the_new_york_day()
              "finished_at": _ts("2026-10-30T10:11:00+00:00")},
             {"dataset": "sec/13f", "started_at": _ts("2026-10-30T11:00:00+00:00"),
              "finished_at": _ts("2026-10-30T11:20:00+00:00")},
-            {"dataset": "uw/financials", "started_at": _ts("2026-10-30T03:00:00+00:00"),   # 23:00 New York, 29 Oct
+            {"dataset": "sec/filings", "started_at": _ts("2026-10-30T03:00:00+00:00"),     # 23:00 New York, 29 Oct
              "finished_at": _ts("2026-10-30T06:00:00+00:00")},
             {"dataset": "market_series", "started_at": _ts("2026-10-30T12:00:00+00:00"), "finished_at": None}]
     view = _build(job_runs=lambda: runs)

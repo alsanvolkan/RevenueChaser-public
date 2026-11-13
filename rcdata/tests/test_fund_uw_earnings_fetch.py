@@ -282,15 +282,14 @@ def test_a_rejected_request_is_counted_once(http_mock, monkeypatch):
 
 
 def test_every_uw_dataset_counts_a_rejected_request_the_same_way(http_mock):
-    """Not only ``uw/earnings``: any dataset on ``ctx.uw_client()`` (``uw/financials`` counted none of its own) gets
-    one failure for a request UW rejects, and none for a 401/403/429/5xx, which ``close()`` takes from
-    ``health()``."""
-    http_mock.add("/stock/BAD/financials", {"error": "unknown ticker"}, status=404)
-    http_mock.add("/stock/KEY/financials", {"error": "no"}, status=401)
-    ctx = base.RunContext(run_id="t", dataset="uw/financials")
+    """Any dataset on ``ctx.uw_client()`` gets one failure for a request UW rejects, and none for a
+    401/403/429/5xx, which ``close()`` takes from ``health()``. The dataset name is only the counter's key."""
+    http_mock.add("/stock/BAD/earnings", {"error": "unknown ticker"}, status=404)
+    http_mock.add("/stock/KEY/earnings", {"error": "no"}, status=401)
+    ctx = base.RunContext(run_id="t", dataset="uw/earnings")
     try:
-        ctx.uw_client().get_result("/stock/BAD/financials")
-        ctx.uw_client().get_result("/stock/KEY/financials")
+        ctx.uw_client().get_result("/stock/BAD/earnings")
+        ctx.uw_client().get_result("/stock/KEY/earnings")
     finally:
         ctx.close()
         ctx.flush_counts()

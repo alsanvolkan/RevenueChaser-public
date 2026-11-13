@@ -93,12 +93,9 @@ def test_the_request_writes_a_share_class_the_way_uw_does():
     dash, UW answers 422 (BRK-A, BF-A, AKO-A, CRD-A, MOG-A, the five of 5,304 that failed on 6 Nov 2026).
     Read from the request the dataset actually sends (``stock_earnings_result``), not from a helper beside it."""
     assert _asked_paths(lambda c: c.stock_earnings_result("BRK-A")) == ["/api/stock/BRK.A/earnings"]
-    assert _asked_paths(lambda c: c.fundamentals_result("BF-A")) == ["/api/stock/BF.A/financials"]
     assert _asked_paths(lambda c: c.stock_earnings_result("AAPL")) == ["/api/stock/AAPL/earnings"]
     # The recorded endpoint names the same path the request asked.
-    from RevenueChaser.rcdata.build.fundamentals import uw_financials
     assert uw_earnings.endpoint("BRK-A") == "/stock/BRK.A/earnings"
-    assert uw_financials.endpoint("BRK-A") == "/stock/BRK.A/financials"
 
 
 def test_the_segment_encoder_stays_a_pure_encoder():

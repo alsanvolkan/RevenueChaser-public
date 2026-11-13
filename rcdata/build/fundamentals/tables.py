@@ -15,7 +15,7 @@ from ... import ops
 from .. import base
 from .. import dirty as dirty_set
 from . import (KIND, common, companyfacts, earnings, estimates, facts, filings, fsds, uw_earnings,
-               uw_financials, wrds_fund)
+               wrds_fund)
 
 NAME = "fundamentals/tables"
 
@@ -129,7 +129,6 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     filings.STAGING["filings"]: filings.FILING,
     filings.STAGING["documents"]: filings.DOCUMENT,
     earnings.STAGING: earnings.SCHEMA,
-    uw_financials.STAGING: facts.FACT,
     **{d.revision_staging: wrds_fund.REVISION for d in wrds_fund.DATASETS if d.revisions},
     estimates.STAGING: estimates.schema(),
     fsds.STAGING: fsds.SCHEMA,
@@ -204,24 +203,17 @@ def _ensure_staging(con: duckdb.DuckDBPyConnection) -> None:
 # ── The served tables ─────────────────────────────────────────────────────────────────────────────────────────
 
 def _facts(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
-    """``fundamental_fact``: the SEC facts, one row per (company, field, period type, period end), the periods a
-    company's predecessor CIK filed (#749), and UW's preliminary quarters after the company's newest SEC quarter
-    (``uw_financials``; only when that is on).
+    """``fundamental_fact``: the SEC facts, one row per (company, field, period type, period end), and the periods
+    a company's predecessor CIK filed (#749).
 
-    A company's UW rows depend only on its own SEC rows, so a dirty company reloads both, and no other company's."""
+    The ``preliminary`` column and its CHECK stay: they are the fact table's shape, and changing it would bump the
+    serving version and rebuild every file. Nothing writes a preliminary row since ``uw/financials`` went (#659)."""
     _clear(con, "fundamental_fact", ciks, "dirty")
     names = _names("fundamental_fact")
     con.execute(f"""INSERT INTO fundamental_fact SELECT {names} FROM {companyfacts.STAGING['facts']}
                     QUALIFY row_number() OVER (PARTITION BY cik, field, period_type, period_end
                                                ORDER BY filed DESC, accn DESC) = 1""")
     _predecessor_facts(con, ciks)
-    if uw_financials.enabled():
-        con.execute(f"""
-            INSERT INTO fundamental_fact SELECT {", ".join(f"u.{c}" for c in names.split(", "))}
-            FROM {uw_financials.STAGING} u
-            JOIN (SELECT cik, max(period_end) AS sec_end FROM fundamental_fact
-                  WHERE NOT preliminary AND period_type = '{facts.QUARTERLY}' GROUP BY cik) s ON s.cik = u.cik
-            WHERE u.period_type = '{facts.QUARTERLY}' AND u.period_end > s.sec_end + {uw_financials.MARGIN_DAYS}""")
     return common.count(con, "fundamental_fact")
 
 

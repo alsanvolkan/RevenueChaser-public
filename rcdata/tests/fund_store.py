@@ -91,7 +91,7 @@ def _facts(cik: str, rec: dict, period_type: str, newest_year: int | None = None
                     "unit": _unit(field), "accn": None if p else accn.get(field) or _ACCN,
                     "filed": None if p else _iso(filed.get(field)) or end, "form": None,
                     "derived": field in derived, "preliminary": p,
-                    "source": "uw/financials" if p else FACTS_DATASET})
+                    "source": FACTS_DATASET})
     return out
 
 

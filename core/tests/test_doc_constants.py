@@ -28,7 +28,6 @@ _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RC_SCHEDULER",                                                  # #158
                "RC_HTTP_CONTACT",                                               # #206, the builder's User-Agent
                "WRDS_USERNAME", "RC_WRDS_PYTHON",                               # PR 5, the spine
-               "RC_UW_PRELIMINARY",                                             # PR 12, the fundamentals
                "RC_WRDS_UNATTENDED",                                            # #344, WRDS from the builder
                "RC_EDGARTOOLS_PYTHON", "RC_SEC_FORMS_CUTTER")                  # #754, the sec_forms cutter
 
@@ -374,7 +373,7 @@ def test_the_fundamentals_section_states_what_the_code_owns():
     command and read API, as the code has them."""
     from RevenueChaser.module_settings import newdata
     from RevenueChaser.rcdata.build import DATASETS
-    from RevenueChaser.rcdata.build.fundamentals import KIND, tables, uw_financials
+    from RevenueChaser.rcdata.build.fundamentals import KIND, tables
     text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
     section = text[text.index("### Fundamentals (`fundamentals.duckdb`, PR 12)"):text.index("## Migration")]
     for name, ds in DATASETS.items():
@@ -387,13 +386,13 @@ def test_the_fundamentals_section_states_what_the_code_owns():
         assert f"`{view}`" in section, view
     for kind in tables.ISSUE_KINDS:
         assert f"`{kind}`" in section, kind
-    assert f"`{uw_financials.FLAG}=1`" in section
     assert f"`{newdata.attended_command(KIND)}`" in section.replace("\n", " ")
     for fn in ("statements", "earnings_events", "estimates", "filing_text", "segments", "customers", "peers",
                "revisions", "statements_many", "fundamental_companies", "filing_items", "filing_texts",
                "customer_shares"):
         assert f"`rcdata.read.{fn}(" in section, fn
     assert "RC_FUNDAMENTALS_SOURCE" not in section        # G6's switch went with #642 PR 6
+    assert "uw/financials" not in section                # the dataset went with #659 (avo: "sil")
     health = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
     for name in newdata.WRDS_DIFFERENCE:
         assert f"`{name}`" in health, name

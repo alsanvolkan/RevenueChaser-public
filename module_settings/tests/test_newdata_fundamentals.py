@@ -14,7 +14,7 @@ from RevenueChaser.rcdata.tests.conftest import market_roots  # noqa: F401 - mar
 
 NOW = datetime(2026, 10, 28, 3, 0, tzinfo=timezone.utc)
 FUNDAMENTALS = {"sec/companyfacts": "daily", "sec/filings": "daily", "alphavantage/earnings_calendar": "daily",
-                "uw/financials": "daily", "yfinance/estimates": "weekly", "sec/fsds": "monthly",
+                "yfinance/estimates": "weekly", "sec/fsds": "monthly",
                 "wrds/fundq": "monthly", "wrds/funda": "monthly",
                 "wrds/segments": "monthly", "fundamentals/tables": "daily"}
 WRDS = ["wrds/fundq", "wrds/funda", "wrds/segments"]
