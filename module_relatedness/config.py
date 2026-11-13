@@ -39,7 +39,9 @@ PROMPT_VERSION = "v3d"
 # characters, so the reader caps. At this value 72 companies lose the far end of their section and a full round
 # is 8,139 first-attempt calls, against 8,128 under the 200,000 cap ``ours-1`` stored with. The value is inside
 # the hashed text: changing it later restales every company over it.
-MAX_INPUT_CHARS = 240_000
+# Not the ``MAX_INPUT_CHARS`` v2 cut every text at (removed by v3, #400): that one shortened every filing to one
+# call; this one bounds the 72 longest sections and leaves the rest whole.
+MAX_BUSINESS_CHARS = 240_000
 
 # The rule version the business sections must be cut with before a profile run reads them (``_forms_ready``,
 # #841). None turns the check off.

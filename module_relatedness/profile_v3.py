@@ -1,6 +1,6 @@
 """Relatedness profile v3 (#400, Relatedness v2 plan Step 1): one structured JSON per company.
 
-The writer reads the whole Item 1 (10-K) / Item 4 (20-F), with no ``MAX_INPUT_CHARS``, plus the filing's segment note,
+The writer reads the whole Item 1 (10-K) / Item 4 (20-F), with no ``MAX_BUSINESS_CHARS``, plus the filing's segment note,
 the SIC, sector and industry, and the company's ``chain_mentions`` names (Value Chain's keyword scan of the same
 filing) as candidates, and returns one JSON object:
 

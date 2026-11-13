@@ -127,7 +127,7 @@ def _seed(ticker: str, text: str, quality: str = "ok") -> None:
 def test_a_section_over_the_cap_is_read_to_the_cap(rawstore_tmp_db, monkeypatch):
     sentence = "We design and sell accelerated computing platforms.\n"
     _seed("NVDA", sentence * 400)
-    monkeypatch.setattr(config, "MAX_INPUT_CHARS", len(sentence) * 100)
+    monkeypatch.setattr(config, "MAX_BUSINESS_CHARS", len(sentence) * 100)
     inp = engine._filing_input("NVDA")
     assert inp["fallback"] == "item" and inp["text"] == engine.clean_input(sentence * 100)
     assert len(profile_v3.split_chunks(inp["text"])) == 1
@@ -135,7 +135,7 @@ def test_a_section_over_the_cap_is_read_to_the_cap(rawstore_tmp_db, monkeypatch)
 
 def test_the_cap_is_what_the_owner_was_shown():
     # 72 of the 4,954 companies with usable text are over it; a round is 8,139 first-attempt calls (13 Nov 2026).
-    assert config.MAX_INPUT_CHARS == 240_000
+    assert config.MAX_BUSINESS_CHARS == 240_000
 
 
 def test_the_hash_pass_hashes_what_the_profile_call_sends(rawstore_tmp_db, monkeypatch):
@@ -143,7 +143,7 @@ def test_the_hash_pass_hashes_what_the_profile_call_sends(rawstore_tmp_db, monke
     on every run."""
     sentence = "We design and sell accelerated computing platforms.\n"
     _seed("NVDA", sentence * 400)
-    monkeypatch.setattr(config, "MAX_INPUT_CHARS", len(sentence) * 100)
+    monkeypatch.setattr(config, "MAX_BUSINESS_CHARS", len(sentence) * 100)
     monkeypatch.setattr(engine, "_context", lambda t, cik, source=None: {})
     sent = engine._prepare("NVDA", "Nvidia", "1")
     assert engine._input_hashes({"1": ["NVDA"]}, {"NVDA": "Nvidia"}) == {"1": sent["hash"]}
