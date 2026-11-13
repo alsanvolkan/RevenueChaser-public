@@ -45,8 +45,12 @@ _START_REF = _rule._START_REF
 
 #: ``quality`` without its suspect flags: ``ok;suspect:S4`` -> ``ok``.
 base = _rule.base
-#: ``quality`` with ``;suspect:<signals>`` added when an ``ok`` slice still looks wrong.
+#: ``quality`` with ``;suspect:<signals>`` added when an ``ok`` slice still looks wrong. Raises every signal,
+#: which is ``ours-1``'s set; a caller that STORES the label calls :data:`cut_flag` with its own
+#: :data:`VERSION` instead, so that bumping ``VERSION`` moves the flagger with the cut (#835).
 flag = _rule.flag
+#: ``quality`` with the flags the named version defines (#835).
+cut_flag = _rule.cut_flag
 #: Crude HTML -> text (scripts/styles dropped, entities unescaped).
 strip_html = _rule.strip_html
 

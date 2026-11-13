@@ -795,15 +795,40 @@ def base(quality) -> str | None:
     return quality.split(";", 1)[0] if isinstance(quality, str) else quality
 
 
-def flag(quality: str, text: str, item: str | None, form: str = "10-K") -> str:
+#: The signals ``ours-1``'s flagger raises -- all of them, which is what every caller of :func:`flag` has had.
+SIGNALS_OURS_1 = ("S1", "S2", "S3", "S4", "S5", "S6", "S8")
+#: And ``ours-2``'s (#835). Two of the seven are **not defined** for it, so they are not computed rather than
+#: computed and ignored:
+#:
+#: - **S8** compares the slice against :data:`MAX_ITEM_CHARS`. ``ours-2`` caps nothing (:attr:`Rule.caps` is
+#:   False), so the length means nothing there: it would flag every long section, right or wrong.
+#: - **S6** asks whether the slice holds another item's heading. The question is already answered in the
+#:   ``ours-2`` **cut**: :func:`_holds_another_item` inside :func:`_quality_ours_2` labels such a slice
+#:   ``overrun``, and on the 4,994 stored 10-K/20-F documents (13 Nov 2026) **0** of ``ours-2``'s 4,926 ``ok``
+#:   cuts satisfy that reading. S6 is not the same predicate, though -- it reads headings with ``ours-1``'s
+#:   :data:`_LINE_END` and :func:`_is_ref`, which take a sub-item for a heading -- so it can still fire here, and
+#:   on those documents it fires **5** times. All five were read at both ends against the stored filing (Sanofi
+#:   1121404, Sensus 1494891, 16160, 763901, 886744): every one starts at its item and stops at the next part
+#:   (``ITEM 1A``, ``ITEM 4A``), so all five are false alarms. The signal is dropped on that measurement, not on
+#:   the identity of the two predicates.
+#:
+#: **What this set does not say.** A version has two cutters -- :attr:`Rule.slice_item` and
+#: :attr:`Rule.aif_business` -- and one signal set between them, so the ``sec_forms`` layer flags a 40-F's
+#: Annual Information Form from this list too. S3 and S6 are item-shaped: S3 looks for a 10-K's own section
+#: headings (competition, human capital, employees, available information), which NI 51-102 does not ask an AIF
+#: to carry, so a correctly cut AIF of a long 40-F reads ``ok;suspect:S2,S3``. That predates #835 -- the 40-F row
+#: already went through :func:`flag` -- and it survives here because S3 stays in the set. It is not fixed in
+#: #835, whose measurement is 10-K/20-F only; a per-cutter set is the shape that would fix it.
+SIGNALS_OURS_2 = ("S1", "S2", "S3", "S4", "S5")
+
+
+def flag(quality: str, text: str, item: str | None, form: str = "10-K", *,
+         signals: tuple[str, ...] = SIGNALS_OURS_1) -> str:
     """``quality`` with ``;suspect:<signals>`` added when an ``ok`` slice of ``text`` still looks wrong.
 
-    **This is ``ours-1``'s flagger, and the only one there is.** S6 reads :data:`_LINE_END`, so a sub-item is a
-    heading to it: it marks PCVX's correctly cut Item 1 ``ok;suspect:S6``, undoing at the label what ``ours-2``
-    fixed in the cut. S8 compares the slice against :data:`MAX_ITEM_CHARS`, which ``ours-2`` does not cap at, so
-    every long ``ours-2`` slice is ``ok;suspect:S8``. The right place for a per-version flagger is a ``flag``
-    member on :class:`Rule`, and the caller that needs it is the ``sec_forms`` layer (#757); until then nothing
-    calls this on an ``ours-2`` slice, and a caller that starts to must read this paragraph first.
+    ``signals`` is the version's own set -- :data:`SIGNALS_OURS_1` by default, so every caller that had this
+    function keeps the label it had. A caller that stores a row names its version instead and reaches this
+    through :func:`cut_flag`, because which signals are defined is a property of the cut, not of the filing.
     """
     if quality != "ok":
         return quality
@@ -817,11 +842,16 @@ def flag(quality: str, text: str, item: str | None, form: str = "10-K") -> str:
         "S3": key == "10-K" and not _SECTION.search(item),
         "S4": bool(_TAIL_REF.search(item[-220:].rstrip())),
         "S5": at > 0 and bool(_START_REF.search(text[max(0, at - 120):at].rstrip())),
-        "S6": any(m.group(1).lower() != own and not _is_ref(item, m) for m in _LINE_END.finditer(item)),
-        "S8": len(item) >= MAX_ITEM_CHARS,
     }
+    # S6 walks the whole slice, and a version that caps nothing leaves that slice as long as the filing: computed
+    # only where it is defined, so a version that does not raise it does not pay for it either.
+    if "S6" in signals:
+        s["S6"] = any(m.group(1).lower() != own and not _is_ref(item, m) for m in _LINE_END.finditer(item))
+    if "S8" in signals:
+        s["S8"] = len(item) >= MAX_ITEM_CHARS
+    s = {k: v for k, v in s.items() if k in signals}
     on = [k for k, v in s.items() if v]
-    if any(s[k] for k in ("S1", "S4", "S5", "S6", "S8")) or (s["S2"] and s["S3"]):
+    if any(s.get(k) for k in ("S1", "S4", "S5", "S6", "S8")) or (s.get("S2") and s.get("S3")):
         return "ok;suspect:" + ",".join(on)
     return quality
 
@@ -1691,6 +1721,13 @@ class Rule:
     #: for it here would be inventing behaviour. :func:`cut_aif_business_q` raises for such a version rather
     #: than making one up.
     aif_business_q: object | None = None
+    #: The suspect signals :func:`flag` may raise for this version's slices (#835). The version is what says
+    #: which are defined, so no second column is needed to record which flags were computed -- but only for a row
+    #: written **after** the flagger of that version last changed: the flags went onto the ``sec_forms`` business
+    #: rows while :data:`OURS_1` kept its name, so an ``ours-1`` row stored before #835 carries no flag and says
+    #: the same ``rules_version`` as one stored after it. That population is mixed until the layer re-cuts, which
+    #: its staleness rule does only when the version string moves. See ``sec_forms.forms._flag``.
+    signals: tuple[str, ...] = SIGNALS_OURS_1
 
 
 RULES: dict[str, Rule] = {
@@ -1698,7 +1735,7 @@ RULES: dict[str, Rule] = {
     # ``ours-2``'s AIF block is its own since #756: six start titles and ten stop titles adapted from
     # edgartools (the provenance block above it), our own section end, and a label.
     OURS_2: Rule(version=OURS_2, slice_item=_slice_item_ours_2, aif_business=_aif_business_ours_2,
-                 caps=False, aif_business_q=_aif_business_ours_2_q),
+                 caps=False, aif_business_q=_aif_business_ours_2_q, signals=SIGNALS_OURS_2),
 }
 
 
@@ -1730,6 +1767,17 @@ def rule(version: str | None | object = _UNSET) -> Rule:
 def cut_item(text: str, form: str = "10-K", *, version: str | None | object = _UNSET) -> tuple[str | None, str]:
     """``(item_text, quality)`` of the business item in ``text``, cut by ``version``."""
     return rule(version).slice_item(text, form)
+
+
+def cut_flag(quality: str, text: str, item: str | None, form: str = "10-K", *,
+             version: str | None | object = _UNSET) -> str:
+    """``quality`` with ``version``'s own ``;suspect`` flags -- what a layer that stores the row calls.
+
+    :func:`flag` raises every signal, which is ``ours-1``'s set; this picks the set the version defines
+    (:attr:`Rule.signals`). What it does **not** give is a way to tell, from a stored row, whether the flagger
+    had already landed when that row was written: see :attr:`Rule.signals`.
+    """
+    return flag(quality, text, item, form, signals=rule(version).signals)
 
 
 def cut_aif_business(text: str, *, version: str | None | object = _UNSET) -> str | None:
