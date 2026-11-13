@@ -347,7 +347,7 @@ def _quality_of(a: dict, debt_free: bool = False) -> dict:
     debt = _to_float(a.get("total_debt"))
     if debt is not None:
         out["debt_basis"] = _debt.FILED
-    elif debt_free:
+    else:  # MUTANT M5: debt_free ignored
         debt, out["debt_basis"] = 0.0, _debt.INFERRED_NONE
     cash = _to_float(a.get("cash"))
     eq = _to_float(a.get("total_equity"))
@@ -415,7 +415,7 @@ def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) ->
     # no later quarter tags a debt line: the board shows one leverage figure per name, and a name whose newest
     # balance sheet carries notes is not debt-free on it, whatever the older year end said.
     newest_q = _newest_quarter_after(quarterly or [], end)
-    fy = _quality_of(a, debt_free=_debt.debt_free(a))  # MUTANT M2: the later-quarter guard dropped
+    fy = _quality_of(a, debt_free=_debt.debt_free(a) and (newest_q is None or _debt.tags_no_debt(newest_q)))
     out = {**fy, "quality_basis": "FY", "quality_period_end": end.isoformat() if end else None}
     ttm_rec = _quality_ttm(annual, quarterly or [], i)
     if ttm_rec is not None:

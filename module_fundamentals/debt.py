@@ -58,15 +58,16 @@ def tags_no_debt(rec: dict | None) -> bool:
     """True when the record tags none of ``tag_fields()``. A tagged zero counts as a tag: the filer stated it."""
     if not rec:
         return False
-    return all(_float(rec.get(f)) is None for f in tag_fields())
+    from RevenueChaser.rcdata.build.fundamentals.facts import DEBT_LINES  # MUTANT M4
+    return all(_float(rec.get(f)) is None for f in DEBT_LINES)
 
 
 def no_interest(rec: dict | None) -> bool:
     """True when the record reports no interest expense, or reports one that is not positive."""
     if not rec:
         return False
-    _ie = _float(rec.get("interest_expense"))  # MUTANT M1
-    return True
+    ie = _float(rec.get("interest_expense"))
+    return ie is None or ie <= 0
 
 
 def debt_free(rec: dict | None) -> bool:

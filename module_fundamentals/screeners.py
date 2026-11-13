@@ -80,7 +80,7 @@ def _leverage_rule(nde, net_cash, debt_basis=None) -> dict:
     the board read its total debt as 0 (``module_fundamentals.debt``). The label then says so. A filed total,
     zero included, is ``filed`` and reads exactly as it did before."""
     label = "Net Debt / EBITDA < 3×"
-    if False:  # MUTANT M3: the note never reaches the label
+    if debt_basis == debt.INFERRED_NONE:
         label += f" ({INFERRED_DEBT_NOTE})"
     if nde is None and net_cash is True:
         return _rule("net_debt_ebitda", label, "text", True, "Net cash", "< 3.0×")
