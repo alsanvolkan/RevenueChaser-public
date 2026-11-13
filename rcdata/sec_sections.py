@@ -794,10 +794,12 @@ _AIF_START_2B = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}(?:{'|'.join(_AIF_TITLE
 #: The titles that end it: the parts of an Annual Information Form around the business block in NI 51-102's
 #: own order. Two of them come **before** it -- general development of the business and the three-year history
 #: are item 4 -- and they are stops because a filing that carries them prints them first and the description
-#: after; the rest follow it. Also from the 225 stored 40-F documents (13 Nov): the numbered "4. ENTERPRISE RISK FACTORS" (AQN), "Capital Structure and Market for Shares"
-#: and "Dividend Policy" (EFLVF), "CAPITAL STRUCTURE OF PEMBINA" (PBA), and the risk headings that do not say
-#: "factors" (EQX, CCJ), and DPRO's "RISK" over "FACTORS" and CG's "Directors" over "and Officers" on
-#: two lines -- each of which let a section run on through the parts behind it. ``DIVIDENDS`` is item 5 and is in the source's own ``_SECTION_PATTERNS`` though
+#: after; the rest follow it. Also from the 225 stored 40-F documents (13 Nov): the numbered "4. ENTERPRISE
+#: RISK FACTORS" (AQN), OBE's "CAPITALIZATION OF OBSIDIAN ENERGY", "Capital Structure and Market for Shares"
+#: and "Dividend Policy" (EFLVF), "CAPITAL STRUCTURE OF PEMBINA" (PBA), the risk headings that do not say
+#: "factors" (EQX, CCJ; GIB's "Forward-Looking Information and Risks and Uncertainties"), and DPRO's "RISK" over
+#: "FACTORS" and CG's "Directors" over "and Officers" on two lines -- each of which let a section run on through
+#: the parts behind it. ``DIVIDENDS`` is item 5 and is in the source's own ``_SECTION_PATTERNS`` though
 #: not in its ``_BUSINESS_ENDS``; the two wordings with a tail (regulatory actions, of the company) are the real
 #: titles of items 12 and 10, which the line anchor would otherwise lose.
 #:
@@ -813,10 +815,13 @@ _AIF_STOP_TITLES_2 = (
     rf"(?:three|3)(?:[^\S\n]|-)+year{_H_SP}history",
     rf"(?:description{_H_SP}of{_H_SP}(?:the{_H_SP})?)?capital{_H_SP}structure"
     rf"(?:{_H_TAIL_SP}and{_H_SP}market{_H_SP}for{_H_SP}(?:securities|shares)|{_H_TAIL_SP}of{_H_SP}[^\W\d_][\w'’]*)?",
+    rf"capitali[sz]ation{_H_TAIL_SP}of{_H_SP}[^\W\d_][\w'’]*",
     rf"material{_H_SP}properties",
     rf"legal{_H_SP}(?:proceedings|matters)(?:{_H_SP}and{_H_SP}regulatory{_H_SP}actions)?",
     rf"(?:enterprise{_H_SP})?risk{_H_WRAP}factors",
     rf"risks{_H_SP}(?:related{_H_SP}to|relating{_H_SP}to|in|that{_H_SP}can{_H_SP}affect){_H_SP}(?:the|our){_H_SP}business",
+    rf"forward(?:[{_DASH}]|{_H_SP})looking{_H_SP}(?:information|statements){_H_SP}and{_H_SP}risks"
+    rf"(?:{_H_SP}and{_H_SP}uncertainties)?",
     rf"code{_H_SP}of{_H_SP}business{_H_SP}conduct",
     rf"market{_H_SP}for{_H_SP}securities",
     rf"dividends?(?:{_H_SP}and{_H_SP}distributions|{_H_TAIL_SP}policy)?",
@@ -1235,7 +1240,7 @@ def _aif_ends(text: str) -> list[int]:
 
 
 def _aif_business_ours_2_q(text: str) -> tuple[str | None, str]:
-    """``(business section, quality)`` of an Annual Information Form in ``text``: ok / overrun / missing.
+    """``(business section, quality)`` of an Annual Information Form in ``text``: ok / short / overrun / missing.
 
     Two passes, and the first one that closes a pair answers.
 
@@ -1266,45 +1271,147 @@ def _aif_business_ours_2_q(text: str) -> tuple[str | None, str]:
 
     Since the 225 stored 40-F documents (13 Nov): "our business" is a second tier of the first pass
     (:data:`_AIF_START_2B`), a run-in title behind a page footer is the very last resort
-    (:func:`_aif_inline_start`), and a section ``ours-1``'s pass closes is labelled ``overrun`` when this
-    version's own stops stand inside it.
+    (:func:`_aif_inline_start`), and a section ``ours-1``'s pass closes is cut at this version's first stop
+    inside it. Round 2: an MD&A exhibit is no AIF (:func:`_aif_is_mda`); a stop whose part was printed before
+    the business block is a sub-heading (:func:`_aif_unlisted_ends`); "development of the business" is read
+    after it (:data:`_AIF_START_2C`); and ``short`` is the label of a numbered item under the minimum
+    (:func:`_aif_short_item`) and of one whose own sub-items go on past its end (:func:`_aif_item_goes_on`).
     """
     text = text or ""
     if not _AIF.search(text):
         return None, "missing"
-    ends = _aif_ends(text)
+    if _aif_is_mda(text):
+        return None, "missing"
+    ends = _aif_unlisted_ends(text, _aif_ends(text))
     overrun: tuple[int, str] | None = None
+    short: str | None = None
     for starts in (_AIF_START_2, _AIF_START_2B):
-        seen = 0                 # how far into ``ends`` the previous start looked; starts arrive in order, so
-        for m in starts.finditer(text):             # the cursor only ever moves forward (round 3 measured
-            if _PAGE_NO.match(text, m.end()):       # 2.3 s on a document holding 8,000 of each)
-                continue
-            if _ref_ours_2(text, m) or _aif_contents_entry(text, m):
-                continue
-            while seen < len(ends) and ends[seen] < m.end():
-                seen += 1
-            end = ends[seen] if seen < len(ends) else None
-            body = text[m.end():(len(text) if end is None else end)].strip()
+        for m, end, body in _aif_pairs(text, ends, starts):
             if len(body) < _AIF_MIN:
+                if short is None and _aif_short_item(text, m, end, body):
+                    short = body
                 continue
             if end is not None:
-                return _aif_trim(body), "ok"
+                return _aif_trim(body), ("short" if _aif_item_goes_on(text, m, end, ends) else "ok")
             if overrun is None:  # starts arrive in document order, so the first unclosed one is the earliest;
                 overrun = (m.start(), body)   # the comparison round 2 needed here was for one loop over two title
     closed, open_ = _aif_pass_ours_1(text)   # sets, and round 3 split those into two passes
     if closed is not None:
         # ``ours-1``'s one stop is RISK FACTORS, so its section can hold the parts this version stops at -- GFR's
-        # holds its capital structure and dividends. The text stays ``ours-1``'s; the label says so. Past the
-        # minimum only, because a sub-heading straight under the heading is the shape round 1 measured. Not
-        # material properties, which a mining filer describes inside its business block (BTG).
+        # holds its capital structure and dividends. ``ours-1``'s own answer is not touched; this version's is
+        # cut at the first of its stops past the minimum, because a sub-heading straight under the heading is
+        # the shape round 1 measured. Not material properties, which a mining filer describes inside its
+        # business block (BTG).
         at = text.find(closed)
-        inside = any(at + _AIF_MIN <= e < at + len(closed) and "material" not in text[e:e + 40].lower() for e in ends)
-        return _aif_trim(closed), ("overrun" if inside else "ok")
+        inside = next((e for e in ends if at + _AIF_MIN <= e < at + len(closed)
+                       and "material" not in text[e:e + 40].lower()), None)
+        return _aif_trim(closed if inside is None else text[at:inside].strip()), "ok"
+    # item 4's own three-year history is a part of it here, not the end of it (TECK prints it in capitals)
+    item_4 = [e for e in ends if "history" not in _aif_stop_key(text, e)]
+    for m, end, body in _aif_pairs(text, item_4, _AIF_START_2C):
+        if end is not None and len(body) >= _AIF_MIN:
+            return _aif_trim(body), "ok"
     if open_ is not None and (overrun is None or open_[0] < overrun[0]):
         overrun = open_
     if overrun is not None:
         return _aif_trim(overrun[1]), "overrun"
-    return _aif_inline_start(text, ends)
+    found = _aif_inline_start(text, ends)
+    if found[0] is None and short is not None:
+        return _aif_trim(short), "short"
+    return found
+
+
+def _aif_pairs(text: str, ends: list[int], starts: re.Pattern):
+    """Each usable start of ``starts`` with the first end after it: ``(match, end or None, body)``."""
+    seen = 0                     # how far into ``ends`` the previous start looked; starts arrive in order, so
+    for m in starts.finditer(text):                 # the cursor only ever moves forward (round 3 measured
+        if _PAGE_NO.match(text, m.end()):           # 2.3 s on a document holding 8,000 of each)
+            continue
+        if _ref_ours_2(text, m) or _aif_contents_entry(text, m):
+            continue
+        while seen < len(ends) and ends[seen] < m.end():
+            seen += 1
+        end = ends[seen] if seen < len(ends) else None
+        yield m, end, text[m.end():(len(text) if end is None else end)].strip()
+
+
+#: "Development of the Business" without the "general" of ``ours-1``'s title is item 4's heading in some AIFs,
+#: and TECK's business block -- operations, reserves, health and safety -- is printed under it with no other
+#: title. Read only after every title above and ``ours-1``'s pass, so it moves no cut they make.
+_AIF_START_2C = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}development{_H_SP}of{_H_SP}(?:the|our){_H_SP}business"
+                           rf"{_AIF_TAIL}")
+
+#: An exhibit that is a Management's Discussion and Analysis and not an AIF: its title comes before the first
+#: "Annual Information Form", which such a document only mentions. GIL's MD&A carried "3.0 OUR BUSINESS" and was
+#: cut as the section; no stored AIF names an MD&A before naming itself.
+_AIF_MDA = re.compile(r"(?i)management[’'`]?s\s+discussion\s+and\s+analysis")
+
+
+def _aif_is_mda(text: str) -> bool:
+    m = _AIF_MDA.search(text, 0, 2_000)
+    return m is not None and _AIF.search(text).start() > m.start()
+
+
+def _aif_stop_key(text: str, at: int) -> str:
+    """The words of the stop title at ``at``, without its number: what makes two printings the same part."""
+    m = _AIF_STOP_2.match(text, at) or _AIF_STOP_INLINE_2.match(text, at)
+    words = re.findall(r"[^\W\d_]+", m.group(0).lower()) if m else []
+    return " ".join(w for w in words if w != "item")
+
+
+def _aif_unlisted_ends(text: str, ends: list[int]) -> list[int]:
+    """``ends`` without a title-case stop whose part the document already printed in capitals before its first
+    business title.
+
+    GIB prints "CAPITAL STRUCTURE" as a part of its own on page 2, before its business on page 5, and its
+    three-year history -- which its own cross-references file under the business section -- has a title-case
+    "Capital Structure" sub-heading that cut the section there. A part printed before the business block is not
+    what ends it. Only the title-case printing is dropped, because asked of every printing this dropped the risk
+    factors of eight exhibits whose contents (all before the business title) list them.
+    """
+    first = _AIF_START_INLINE_2.search(text)
+    if first is None:
+        return ends
+    before = {_aif_stop_key(text, e) for e in ends if e < first.start() and _aif_caps_at(text, e)}
+    return [e for e in ends if e < first.start() or _aif_caps_at(text, e) or _aif_stop_key(text, e) not in before]
+
+
+def _aif_caps_at(text: str, at: int) -> bool:
+    m = _AIF_STOP_2.match(text, at) or _AIF_STOP_INLINE_2.match(text, at)
+    return m is not None and _printed_as_a_heading(m.group(0))
+
+
+#: A start and an end that are both numbered items: a real section and its successor, which is the one shape in
+#: which a body under :data:`_AIF_MIN` is still a section. RCI's item 5 is 3,158 characters of pointers into its
+#: MD&A, closed by "ITEM 5.2 – RISK FACTORS"; its contents entry, 332, stays under :data:`_AIF_ITEM_MIN`.
+_AIF_ITEM_LINE = re.compile(r"(?i)[^\S\n]*item[^\S\n]+(?:\d|[ivx]+\b)")
+_AIF_ITEM_MIN = 1_000
+
+
+def _aif_short_item(text: str, m: re.Match, end: int | None, body: str) -> bool:
+    return (end is not None and len(body) >= _AIF_ITEM_MIN
+            and _AIF_ITEM_LINE.match(m.group(0)) is not None and _AIF_ITEM_LINE.match(text, end) is not None)
+
+
+_AIF_SUB_NUMBERED = re.compile(r"(?im)^[^\S\n]*(?:item[^\S\n]+(\d{1,2})|(?:item[^\S\n]+)?(\d{1,2})\.\d{1,2})"
+                               r"[.):]?[^\S\n]+[^\W\d_]")
+
+
+def _aif_item_goes_on(text: str, m: re.Match, end: int, ends: list[int]) -> bool:
+    """True when the end is a numbered part of the start's own item and the item goes on after it.
+
+    CNR's "ITEM 4" ends at "4.8 LEGAL MATTERS", and "4.9 INTANGIBLE PROPERTIES" follows before the next stop: the
+    business block was cut short, and the label says so. A stop numbered as the next item, or one with nothing of
+    its own item after it, is the end the numbering promises.
+    """
+    n = (re.match(r"[^\S\n]*(?:item[^\S\n]+)?(\d{1,2})\b", m.group(0), re.I)   # CNR prints "ITEM 4" on the line
+         or re.search(r"(?i)\bitem[^\S\n]+(\d{1,2})[^\S\n]*[.:]?[^\S\n]*\n[^\S\n]*\Z",  # above its title
+                      text[max(0, m.start() - 40):m.start()]))
+    if (n is None or "risk" in _aif_stop_key(text, end)       # risk factors are 5.2 of item 5 and still its end
+            or not re.match(rf"[^\S\n]*(?:item[^\S\n]+)?{n.group(1)}\.\d", text[end:end + 20], re.I)):
+        return False
+    nxt = _AIF_SUB_NUMBERED.search(text, end + 1)               # the next numbered part after the end's own line
+    return nxt is not None and (nxt.group(1) or nxt.group(2)) == n.group(1)
 
 
 #: A start title in capitals in the middle of a line, behind a printed page number and followed by prose: EQX
@@ -1439,7 +1546,7 @@ def cut_aif_business(text: str, *, version: str | None | object = _UNSET) -> str
 
 
 def cut_aif_business_q(text: str, *, version: str | None | object = _UNSET) -> tuple[str | None, str]:
-    """``(business section, quality)`` -- ok / overrun / missing -- for a version that labels it.
+    """``(business section, quality)`` -- ok / short / overrun / missing -- for a version that labels it.
 
     ``ValueError`` for one that does not, which is ``ours-1``: its block answers text or nothing, and a label
     made up here would be a label no measurement stands behind.

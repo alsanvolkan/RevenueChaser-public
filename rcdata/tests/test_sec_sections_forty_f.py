@@ -1638,3 +1638,79 @@ def test_a_stop_split_over_two_lines_leaves_no_fragment_at_the_end():
     for split in ("-68-\nDESCRIPTION OF THE\nCAPITAL STRUCTURE OF PEMBINA\n", "9\nITEM\n7: RISK FACTORS\n"):
         section, quality = _cut2(AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\n" + split + "After. " * 400)
         assert quality == "ok" and not section.endswith(("THE", "ITEM")), split
+
+
+# ── round 2 over the 225 stored 40-F documents, 13 Nov 2026 ────────────────────────────────────────────────────
+def test_gil_an_md_and_a_exhibit_is_not_an_annual_information_form():
+    """GIL's exhibit is its MD&A: "3.0 OUR BUSINESS" was cut as the business section, labelled ``ok``. The MD&A
+    names itself before it ever mentions an AIF; an AIF names itself first, even where it mentions its MD&A.
+    """
+    mda = ("2025 REPORT TO SHAREHOLDERS\nMANAGEMENT’S DISCUSSION AND ANALYSIS\n" + "Preface. " * 400
+           + AIF + "3.0 OUR BUSINESS\n" + BODY + "\n9.0 LEGAL PROCEEDINGS\n")
+    assert _cut2(mda) == (None, "missing")
+    aif = (AIF + "Read it with our Management's Discussion and Analysis.\nOUR BUSINESS\n" + BODY
+           + "\nLEGAL PROCEEDINGS\n")
+    assert _cut2(aif) == (BODY.strip(), "ok")
+
+
+def test_gfr_ours_1_s_pass_is_cut_at_this_version_s_first_stop_and_ours_1_is_not():
+    """GFR's only business heading is ``ours-1``'s, and ``ours-1``'s one stop is RISK FACTORS, so its section
+    held GFR's capital structure, dividends and market. ``ours-1`` answers that text still; ``ours-2`` cuts it at
+    its own first stop past the minimum.
+    """
+    text = (AIF + "GENERAL DEVELOPMENT OF THE BUSINESS\n" + BODY + "\nDESCRIPTION OF CAPITAL STRUCTURE\n"
+            + "Shares. " * 600 + "\nRISK FACTORS\n")
+    old = sec_sections.cut_aif_business(text, version=OURS_1)
+    assert "DESCRIPTION OF CAPITAL STRUCTURE" in old
+    assert _cut2(text) == (BODY.strip(), "ok")
+
+
+def test_rci_a_short_numbered_item_closed_by_the_next_is_a_short_section():
+    """RCI's item 5 is 3,158 characters of pointers into its MD&A, between "ITEM 5" and "ITEM 5.2 – RISK
+    FACTORS": under the minimum, and still the section. Its contents entry, 332 characters, is not.
+    """
+    pointers = "This section incorporates by reference the following sections of our MD&A: About Rogers 16\n" * 20
+    text = (AIF + "ITEM 5 – Narrative Description of the Business\n" + "Item 6 Dividends\n" * 20
+            + "Front matter. " * 400 + "\nITEM 5 – Narrative Description of the Business\n" + pointers
+            + "ITEM 5.2 – RISK FACTORS\n" + "Risky. " * 400)
+    assert _cut2(text) == (pointers.strip(), "short")
+    unnumbered = AIF + "DESCRIPTION OF THE BUSINESS\n" + pointers + "RISK FACTORS\n" + "Risky. " * 400
+    assert _cut2(unnumbered) == (None, "missing"), "a short body needs both numbers to be read as an item"
+
+
+def test_cnr_an_end_inside_the_start_s_own_numbered_item_is_short():
+    """CNR's "ITEM 4" ends at "4.8 LEGAL MATTERS", and "4.9 INTANGIBLE PROPERTIES" follows: the item goes on."""
+    text = (AIF + "ITEM 4\nDESCRIPTION OF THE BUSINESS\n" + BODY + "\n4.8 LEGAL MATTERS\nNone.\n"
+            + "4.9 INTANGIBLE PROPERTIES\nPatents.\n4.10 RISK FACTORS\nRisky.\nITEM 5 DIVIDENDS\n")
+    assert _cut2(text) == (BODY.strip(), "short")
+    closed = AIF + "ITEM 4 DESCRIPTION OF THE BUSINESS\n" + BODY + "\n4.8 RISK FACTORS\nRisky.\n4.9 OTHER\nX.\n"
+    assert _cut2(closed) == (BODY.strip(), "ok"), "risk factors are the end even as a sub-item"
+
+
+def test_teck_development_of_the_business_is_read_after_everything_else():
+    """TECK prints its business block under "DEVELOPMENT OF THE BUSINESS", its three-year history in capitals
+    inside it, and no other business title.
+    """
+    text = (AIF + "DEVELOPMENT OF THE BUSINESS\nOVERVIEW\n" + BODY[:2_000] + "\nTHREE-YEAR HISTORY\n" + BODY
+            + "\nRISK FACTORS\n" + "Risky. " * 400)
+    section, quality = _cut2(text)
+    assert quality == "ok" and section.endswith(BODY.strip()) and "THREE-YEAR HISTORY" in section
+
+
+def test_gib_a_title_case_stop_whose_part_was_printed_before_the_business_does_not_end_it():
+    """GIB prints "CAPITAL STRUCTURE" before its business, and a "Capital Structure" sub-heading inside the
+    history it files under the business; that sub-heading cut the section. Its real end is its risk part,
+    "Forward-Looking Information and Risks and Uncertainties".
+    """
+    text = (AIF + "CAPITAL STRUCTURE\n" + "Shares. " * 200 + "\nDESCRIPTION OF CGI’S\nBUSINESS\n" + BODY
+            + "\nCapital Structure\nNet debt.\n" + BODY + "\nForward-Looking Information and Risks and Uncertainties\n"
+            + "Risky. " * 400)
+    section, quality = _cut2(text)
+    assert quality == "ok" and len(section) > 2 * len(BODY.strip()) and "Risky." not in section
+
+
+def test_obe_a_run_in_capitalization_part_ends_the_section():
+    text = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\n15 CAPITALIZATION OF OBSIDIAN ENERGY Share Capital\n"
+            + "Shares. " * 400)
+    section, quality = _cut2(text)
+    assert quality == "ok" and section.startswith(BODY.strip()) and "Shares." not in section
