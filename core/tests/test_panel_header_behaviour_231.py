@@ -51,9 +51,12 @@ CASES = {
          "/api/settings/board/module_comovement",
          "/api/automations/RC-Daily-Bars/install"]),
     "module_leaps": (
-        "rcWatchToggle(_btn({'data-rc-watch': 'stock', 'data-ticker': 'AAPL'}));"
-        "rcWatchToggle(_btn({'data-rc-watch': 'option', 'data-ticker': 'AAPL'}));",
-        ["/api/watchlist/stock/toggle/AAPL", "/api/watchlist/option/toggle/AAPL"]),
+        # The "add to list" menu (#786 step 5), opened on AAPL: a tick on a job list and one on avo's own.
+        "RC_WATCH.lists = [{id: 'jobs.stock', name: 'Stock picks', group: 'Read by the jobs', count: 0, has: {}},"
+        "                  {id: 'index', name: 'index', group: 'Your lists', count: 0, has: {}}];"
+        "RC_WATCH.open = {btn: _btn(), ticker: 'AAPL', busy: {}, errors: {}, msg: ''};"
+        "rcWatchTick('jobs.stock'); rcWatchTick('index');",
+        ["/api/watchlists/jobs.stock/tick/AAPL", "/api/watchlists/index/tick/AAPL"]),
     "module_uw_interaction": (
         """
         document.getElementById('uw-tool').value = 'flow_alerts';

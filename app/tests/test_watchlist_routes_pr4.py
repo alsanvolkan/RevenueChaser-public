@@ -88,12 +88,15 @@ def test_rawstore_watchlist_accessors_are_the_stock_list():
 
 
 def test_the_lists_read_is_both_tickers_lists_and_never_creates_the_file(client):
-    assert client.get("/api/watchlists").get_json() == {"ok": True, "option": [], "stock": []}
+    first = client.get("/api/watchlists").get_json()
+    assert {k: first[k] for k in ("ok", "option", "stock")} == {"ok": True, "option": [], "stock": []}
+    assert [r["id"] for r in first["lists"]] == ["jobs.option", "jobs.stock"]    # the menu's lists (#786 step 5)
     assert not ops.ops_path().exists()
     client.post("/api/watchlist/option/toggle/NVDA")
     client.post("/api/watchlist/stock/toggle/MSFT")
     client.post("/api/watchlist/stock/toggle/AAPL")
-    assert client.get("/api/watchlists").get_json() == {"ok": True, "option": ["NVDA"], "stock": ["AAPL", "MSFT"]}
+    got = client.get("/api/watchlists").get_json()
+    assert {k: got[k] for k in ("ok", "option", "stock")} == {"ok": True, "option": ["NVDA"], "stock": ["AAPL", "MSFT"]}
 
 
 def test_remove_takes_a_name_off_and_never_adds_it(client):

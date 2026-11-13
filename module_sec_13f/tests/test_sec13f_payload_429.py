@@ -210,5 +210,5 @@ console.log(JSON.stringify(tds.map(function(c){ return c[1].innerHTML; })));
 """, tmp_path, payload=payload)
     assert len(log) == 3
     for t, cell in zip(("AAA", "BBB", "CCC"), log):
-        assert f'data-rc-watch="option" data-ticker="{t}"' in cell and f'data-rc-watch="stock" data-ticker="{t}"' in cell
+        assert f'data-rc-watch-menu="" data-ticker="{t}"' in cell
     assert 'rcWatchInit("sec_13f")' in html

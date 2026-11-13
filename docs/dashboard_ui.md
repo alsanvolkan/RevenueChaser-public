@@ -216,23 +216,23 @@ one-screen intro.
 
 ---
 
-## 2c. The watch-list pair (PR 4)
+## 2c. The "add to list" button (PR 4; one menu since #786 step 5)
 
-Two 44 px toggles, **Opt** and **Stk**, next to a ticker: they put the name on the option watch list (what the
-options build covers besides SPX, D2) or the stock watch list (LEAPS, Earnings), or take it off. One shared snippet,
-`core/reporting_common.py`: `watch_buttons_html(ticker)` renders the pair on the server, `rcWatchButtons(ticker)` /
-`rcWatchRow(ticker)` (the pair on its own line, for a card) in a board's JS, and `watchlist_html(board)` mounts the
-CSS, the script and `rcWatchInit(board)` once per page. Which names are on the lists is read live
-(`GET /api/watchlists`) when the page loads, so a board rendered yesterday still shows today's lists. One
-capture-phase click handler reads `data-rc-watch` and `data-ticker` (never an interpolated value, ADR-X1), posts
-`/api/watchlist/<list>/toggle/<ticker>` with the board as `X-RC-Panel` (the row's `added_by`), and re-marks every
-pair of that ticker; a row or card that opens on click does not open when its pair is pressed. A ticker the
-dashboard's `_TICKER_RE` refuses gets no pair. Since #770 the pair is **one box split by a hairline**, stock on the
-left, option on the right, with a glyph in each half (bars, and a contract sheet) instead of the old `Stk` / `Opt`
-text; the text stays in `aria-label` and `title`, so the control is never icon-only to a screen reader. Pressed is
-`aria-pressed="true"`, filled in the sky token for the stock list and the amber one for the option list, so the two
-lists differ by shape and position before colour; a refused toggle leaves the state and says why in the button's
-title.
+One 44 px bookmark next to a ticker. Pressing it opens a menu of every watch list: avo's own named lists under
+**Your lists**, then the two the jobs read under **Read by the jobs** (*Stock picks*, which prices, LEAPS and
+Earnings take, and *Option chains*, which the options build takes). Each row is a checkbox with the list's size;
+a tick puts the ticker on that list and an untick takes it off (`POST /api/watchlists/<id>/tick/<ticker>`,
+`module_watchlists/menu.py`). The button shows how many lists hold the ticker and is tinted in the sky token when
+that is one or more. One shared snippet, `core/reporting_common.py`: `watch_buttons_html(ticker)` renders the
+button on the server, `rcWatchButtons(ticker)` / `rcWatchRow(ticker)` (the button on its own line, for a card) in a
+board's JS, and `watchlist_html(board)` mounts the CSS, the script and `rcWatchInit(board)` once per page. Which
+lists hold which names is read live (`GET /api/watchlists`) when the page loads. One capture-phase click handler
+reads `data-ticker` (never an interpolated value, ADR-X1) and posts with the board as `X-RC-Panel` (the row's
+`added_by`); a row or card that opens on click does not open when its button is pressed. A ticker the dashboard's
+`_TICKER_RE` refuses gets no button. The button is `aria-haspopup="menu"`, the rows are `menuitemcheckbox`, arrows
+move between them, Escape closes and returns focus to the button. With a mouse the menu drops under the button; on
+a phone (600 px and narrower) it is a bottom sheet with 44 px rows. A refused tick leaves the box as it was and says
+why under the list.
 
 Where each board puts it (`core/tests/test_watchlist_boards_pr4.py` classifies every board):
 
@@ -373,7 +373,7 @@ nested grouping). Count is `{n} names`.
 - [ ] Implied Probability uses in-board filters + combobox; no `#oipd-ticker` header box
 - [ ] Universal filters use the shared filter kit (`rc_filters`, `filters_bar_html` + `filters_meta`, `docs/dashboard_ui.md` §2b); no literal index list
 - [ ] Count string matches the grouping
-- [ ] Every ticker the board renders carries the watch-list pair (§2c), or the board is listed with a reason in
+- [ ] Every ticker the board renders carries the "add to list" button (§2c), or the board is listed with a reason in
   `core/tests/test_watchlist_boards_pr4.py`
 - [ ] Unit tests assert chrome; e2e if fetch/refresh/routes change
 - [x] Earnings Radar v2 and ER v2 Calibration are gone (no tab, route, job, package)

@@ -273,7 +273,15 @@ with its history row. No provider call, no DuckDB file.
   removed}`. It never adds, so a Remove on a stale page cannot put back a name removed elsewhere.
 - **`POST /api/watchlist/toggle/<ticker>`**: the pre-PR 4 route, now the stock list; answers `{ok, ticker,
   in_watchlist}` as before. `rawstore.toggle_watchlist`, `load_watchlist` and `save_watchlist` are the stock list too.
-- **`GET /api/watchlists`**: `{ok, option: [tickers], stock: [tickers]}`, what the board buttons show as pressed.
+- **`GET /api/watchlists`**: `{ok, option: [tickers], stock: [tickers], lists: [...]}`. `lists` is what every
+  board's "add to list" menu offers (#786 step 5, `module_watchlists/menu.py`): avo's own lists first, then
+  `jobs.option` and `jobs.stock`, each `{id, name, group, job, count, tickers}`, where `tickers` are the US
+  listings on it (the ones a board's ticker can match) and `count` the list's whole size.
+- **`POST /api/watchlists/<list_id>/tick/<ticker>`** `{on: true|false}` -> `{ok, list_id, ticker, on}`: the menu's
+  write. On one of avo's lists a tick stores the spine's spelling (`NASDAQ:NVDA`) in the unnamed top section and an
+  untick removes every US listing of the ticker; on `jobs.option` / `jobs.stock` it is `ops.watch_add` /
+  `ops.watch_remove`. Both ways it writes nothing when there is nothing to change. 400 for a bad ticker, a missing
+  `on` or a ticker the spine cannot place on a US exchange; 404 for an unknown list; 403 without the panel header.
   The read itself never creates `ops.sqlite`; the read log it counts into is flushed to it once a minute, which
   may, as for every `rcdata.read` call. A flush that fails keeps its counts for the next one and never fails the
   read (#228).

@@ -2144,11 +2144,38 @@ def api_watchlist_remove(kind: str, ticker: str):
 
 @app.route("/api/watchlists")
 def api_watchlists():
-    """Both watch lists' tickers, ``{ok, option: [...], stock: [...]}``: what a board's button pair shows as pressed.
+    """Every watch list a board's "add to list" menu offers: ``{ok, option: [...], stock: [...], lists: [...]}``.
+    ``option`` / ``stock`` are the two job lists' tickers, as before; ``lists`` is ``module_watchlists.menu.lists``
+    (avo's own lists first, then the two job lists), each with the US tickers on it.
     The read itself never creates ``ops.sqlite`` (the read log's minute flush may, as for every rcdata read)."""
+    from RevenueChaser.module_watchlists import menu
     from RevenueChaser.rcdata import read
     lists = read.watchlists()
-    return jsonify({"ok": True, **{k: [r["ticker"] for r in rows] for k, rows in lists.items()}})
+    return jsonify({"ok": True, **{k: [r["ticker"] for r in rows] for k, rows in lists.items()},
+                    "lists": menu.lists()})
+
+
+@app.route("/api/watchlists/<list_id>/tick/<ticker>", methods=["POST"])
+def api_watchlists_tick(list_id: str, ticker: str):
+    """The "add to list" menu's write (#786 step 5): ``{"on": true}`` puts ``ticker`` on ``list_id``, ``false``
+    takes it off. ``{ok, list_id, ticker, on}``. Works for avo's own lists and the two job lists alike
+    (``module_watchlists.menu``); 400 for a bad ticker, a missing ``on`` or a ticker the spine cannot place,
+    404 for an unknown list. The board that sent it (``X-RC-Panel``) is the row's ``added_by``."""
+    from RevenueChaser.module_watchlists import board as wl_board
+    from RevenueChaser.module_watchlists import menu, store
+    t = (ticker or "").strip().upper()
+    if not _valid_ticker(t):
+        return jsonify({"ok": False, "error": "bad ticker"}), 400
+    on = _wl_body().get("on")
+    if not isinstance(on, bool):
+        return jsonify({"ok": False, "error": "on must be true or false"}), 400
+    if not wl_board.job_kind(list_id) and store.get_list(list_id) is None:
+        return jsonify({"ok": False, "error": "no such watch list"}), 404
+    try:
+        now = menu.set_on(list_id, t, on, by=_requested_by())
+    except (menu.MenuError, store.WatchlistError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "list_id": list_id, "ticker": t, "on": now})
 
 
 @app.route("/api/watchlist/toggle/<ticker>", methods=["POST"])
