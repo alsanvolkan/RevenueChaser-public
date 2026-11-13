@@ -347,7 +347,7 @@ def _quality_of(a: dict, debt_free: bool = False) -> dict:
     debt = _to_float(a.get("total_debt"))
     if debt is not None:
         out["debt_basis"] = _debt.FILED
-    else:  # MUTANT M5: debt_free ignored
+    elif debt_free:
         debt, out["debt_basis"] = 0.0, _debt.INFERRED_NONE
     cash = _to_float(a.get("cash"))
     eq = _to_float(a.get("total_equity"))
