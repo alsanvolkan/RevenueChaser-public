@@ -32,7 +32,7 @@ def test_the_ticker_rule_is_the_dashboards():
 
 
 @pytest.mark.parametrize("ticker", HOSTILE)
-def test_a_ticker_the_dashboard_refuses_gets_no_button(ticker):
+def test_a_ticker_the_dashboard_refuses_gets_no_buttons(ticker):
     assert rc.watch_buttons_html(ticker) == "" or ticker == "NVDA\n"
 
 
