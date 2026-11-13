@@ -257,80 +257,114 @@ def combobox_html(input_id: str, label_id: str, placeholder: str) -> str:
             f'<ul id="{i}-list" class="rcf-list" role="listbox" aria-label="Matching names" hidden></ul></div>')
 
 
-# ── The watch-list button pair (PR 4, D2) ──
-# Two 44 px toggles next to a ticker: the option watch list (what the options build covers besides SPX) and the stock
-# watch list (LEAPS, Earnings). A board renders them with ``watch_buttons_html`` (server-side) or ``rcWatchButtons``
-# (its JS), and mounts ``watchlist_html(board)`` once. One delegated click handler reads ``data-rc-watch`` and
-# ``data-ticker`` (never an interpolated value, ADR-X1), POSTs ``/api/watchlist/<list>/toggle/<ticker>`` with the
-# board as ``X-RC-Panel`` (the row's ``added_by``), and marks every pair of that ticker on the page. Which tickers are
-# on the lists is read live (``GET /api/watchlists``) when the page loads, not baked in when the board was rendered.
-# A ticker the dashboard's rule (``app/dashboard.py`` ``_TICKER_RE``) refuses gets no buttons.
+# ── The "add to list" button (#786 step 5; was the Stock / Option pair of PR 4, D2) ──
+# One 44 px bookmark next to a ticker. Pressing it opens a menu of every watch list: avo's own named lists first
+# ("Your lists"), then the two the jobs read ("Read by the jobs": the stock list LEAPS, prices and Earnings take, the
+# option list the options build takes). Each row is a checkbox with the list's size; a tick puts the ticker on that
+# list, an untick takes it off (``POST /api/watchlists/<id>/tick/<ticker>``, ``module_watchlists/menu.py``). The
+# button shows how many lists hold the ticker. A board renders it with ``watch_buttons_html`` (server side) or
+# ``rcWatchButtons`` (its JS) and mounts ``watchlist_html(board)`` once; the board becomes ``X-RC-Panel``, the
+# rows' ``added_by``. One delegated click handler reads ``data-ticker`` (never an interpolated value, ADR-X1); which
+# lists hold which tickers is read live (``GET /api/watchlists``) when the page loads. A ticker the dashboard's rule
+# (``app/dashboard.py`` ``_TICKER_RE``) refuses gets no button. On a phone the menu is a bottom sheet with 44 px
+# rows; the button is ``aria-haspopup``, the rows ``menuitemcheckbox``, Escape closes and focus returns.
 WATCH_TICKER_PATTERN = r"[A-Z0-9][A-Z0-9.\-]{0,9}"
-# Stock first, then option: the owner's order (12 Nov 2026). The text label is gone from the surface but
-# stays the accessible name, so nothing here is icon-only to a screen reader.
-WATCH_LABELS = {"stock": ("Stk", "stock watch list"), "option": ("Opt", "option watch list")}
-# Bars for the stock list, a contract sheet for the option list: two different shapes, so the lists are told
-# apart without colour.
-WATCH_ICONS = {
-    "stock": ('<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">'
-              '<path d="M2 11.5h2.6v3H2zM6.7 6h2.6v8.5H6.7zM11.4 2.5H14v12h-2.6z" fill="none" '
-              'stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>'),
-    "option": ('<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">'
-               '<path d="M4 1.8h5.2L13 5.5v8.7H4z" fill="none" stroke="currentColor" stroke-width="1.3" '
-               'stroke-linejoin="round"/><path d="M9 2v4h4" fill="none" stroke="currentColor" '
-               'stroke-width="1.3" stroke-linejoin="round"/><path d="M6.3 9.4h4.2M6.3 11.6h2.8" '
-               'stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>'),
-}
+WATCH_ICON = ('<svg class="rc-watch-ico" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" '
+              'focusable="false"><path d="M4 2h8v12l-4-3-4 3z" fill="var(--rc-watch-fill,none)" '
+              'stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>')
 _WATCH_TICKER_RE = re.compile(WATCH_TICKER_PATTERN)
 
 WATCHLIST_CSS = """<style>
-.rc-watch{display:inline-flex;align-items:center;vertical-align:middle;margin:0 6px 0 0;flex-wrap:nowrap;
-  border:1px solid var(--input-border,#2F434C);border-radius:8px;overflow:hidden}
-.rc-watch button{display:flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:0;
-  box-sizing:border-box;border:0;cursor:pointer;background:var(--input-bg,#101F33);color:var(--muted,#9C9DA1);
+.rc-watch{display:inline-flex;align-items:center;vertical-align:middle;margin:0 6px 0 0;flex:none}
+.rc-watch button{position:relative;display:flex;align-items:center;justify-content:center;gap:2px;min-width:44px;
+  min-height:44px;padding:0 6px;box-sizing:border-box;cursor:pointer;border:1px solid var(--input-border,#2F434C);
+  border-radius:8px;background:var(--input-bg,#101F33);color:var(--muted,#9C9DA1);
   transition:color 150ms ease,background-color 150ms ease}
-.rc-watch button + button{border-left:1px solid var(--input-border,#2F434C)}
 .rc-watch button:hover{color:var(--fg,#C5C6C8);background:var(--hover,#18293a)}
-.rc-watch button[data-rc-watch="stock"][aria-pressed="true"]{color:var(--sky,#0EA5E9);
+.rc-watch button[data-on]:not([data-on="0"]){color:var(--sky,#0EA5E9);--rc-watch-fill:currentColor;
   background:color-mix(in oklab, var(--sky,#0EA5E9) 16%, var(--input-bg,#101F33))}
-.rc-watch button[data-rc-watch="option"][aria-pressed="true"]{color:var(--amber,#FBBF24);
-  background:color-mix(in oklab, var(--amber,#FBBF24) 16%, var(--input-bg,#101F33))}
+.rc-watch button[aria-expanded="true"]{outline:2px solid var(--sky,#0EA5E9);outline-offset:-2px}
 .rc-watch button:focus-visible{outline:2px solid var(--focus,var(--sky,#0EA5E9));outline-offset:-2px}
-.rc-watch button:disabled{opacity:.6;cursor:progress}
-.rc-watch button[data-rc-watch-error]{border-color:var(--neg,#F87171)}
+.rc-watch-n{font:600 10.5px/1 system-ui,sans-serif;font-variant-numeric:tabular-nums}
+.rc-watch-n:empty{display:none}
 .rc-watch-row{display:flex;margin:4px 0 2px}
 .rc-watch-row .rc-watch{margin-left:0}
+.rc-wm{position:fixed;z-index:1000;box-sizing:border-box;width:320px;max-width:calc(100vw - 16px);max-height:min(70vh,520px);
+  overflow-y:auto;overscroll-behavior:contain;padding:6px 0;border:1px solid var(--border,#232a38);border-radius:10px;
+  background:var(--card,#12161e);color:var(--fg,#d7dce5);box-shadow:0 10px 30px rgba(0,0,0,.35);
+  font:13px/1.3 system-ui,sans-serif}
+.rc-wm[hidden]{display:none}
+.rc-wm-top{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 12px 6px}
+.rc-wm-top b{font-size:13.5px}
+.rc-wm-x{min-width:44px;min-height:44px;border:0;background:none;color:var(--muted,#9C9DA1);font-size:20px;cursor:pointer;
+  display:none}
+.rc-wm-h{padding:8px 12px 4px;color:var(--muted,#9C9DA1);font-size:11px;font-weight:600;letter-spacing:.04em;
+  text-transform:uppercase}
+.rc-wm-i{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;padding:6px 12px;box-sizing:border-box;
+  border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.rc-wm-i:hover,.rc-wm-i:focus-visible{background:var(--hover,#18293a);outline:none}
+.rc-wm-i:disabled{opacity:.6;cursor:progress}
+.rc-wm-box{flex:none;width:16px;height:16px;box-sizing:border-box;border:1.5px solid var(--muted,#9C9DA1);border-radius:4px;
+  display:flex;align-items:center;justify-content:center}
+.rc-wm-i[aria-checked="true"] .rc-wm-box{background:var(--sky,#0EA5E9);border-color:var(--sky,#0EA5E9)}
+.rc-wm-i[aria-checked="true"] .rc-wm-box::after{content:"";width:8px;height:4px;margin-top:-2px;border:solid var(--card,#12161e);
+  border-width:0 0 2px 2px;transform:rotate(-45deg)}
+.rc-wm-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rc-wm-c{flex:none;color:var(--muted,#9C9DA1);font-variant-numeric:tabular-nums;font-size:12px}
+.rc-wm-i[data-error] .rc-wm-c{color:var(--neg,#F87171)}
+.rc-wm-msg{margin:6px 12px 2px;color:var(--neg,#F87171);font-size:12px}
+.rc-wm-msg:empty{display:none}
+.rc-wm-foot{display:block;margin-top:4px;padding:10px 12px 6px;border-top:1px solid var(--border,#232a38);
+  color:var(--sky,#0EA5E9);text-decoration:none;font-size:12.5px}
+.rc-wm-empty{padding:8px 12px;color:var(--muted,#9C9DA1)}
+.rc-wm-back{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.4)}
+.rc-wm-back[hidden]{display:none}
+@media (max-width:600px){
+  .rc-wm{left:0 !important;right:0;top:auto !important;bottom:0;width:100%;max-width:100%;max-height:75vh;
+    border-radius:14px 14px 0 0;padding-bottom:max(8px, env(safe-area-inset-bottom))}
+  .rc-wm-x{display:block}
+  .rc-wm-i{min-height:44px}
+  .rc-wm-foot{min-height:44px;box-sizing:border-box;display:flex;align-items:center}
+}
 </style>"""
 
 WATCHLIST_JS = ESC_JS + r"""
-var RC_WATCH = {board: 'board', lists: {option: {}, stock: {}}, loaded: false, toggled: {}};
+var RC_WATCH = {board: 'board', lists: [], loaded: false, touched: {}, open: null};
 var RC_WATCH_RE = /^""" + WATCH_TICKER_PATTERN + r"""$/;
-var RC_WATCH_LABELS = """ + json.dumps({k: list(v) for k, v in WATCH_LABELS.items()}) + r""";
-var RC_WATCH_ICONS = """ + json.dumps(WATCH_ICONS) + r""";
+var RC_WATCH_ICON = """ + json.dumps(WATCH_ICON) + r""";
+var RC_WATCH_GROUPS = ['Your lists', 'Read by the jobs'];
 function rcWatchTicker(t){ t = String(t == null ? '' : t).trim().toUpperCase(); return RC_WATCH_RE.test(t) ? t : ''; }
-// On a card, the pair gets its own line under the ticker (a ticker line that clips a long name must not clip it).
+// On a card, the button gets its own line under the ticker (a ticker line that clips a long name must not clip it).
 function rcWatchRow(ticker){ var b = rcWatchButtons(ticker); return b ? '<div class="rc-watch-row">' + b + '</div>' : ''; }
+function rcWatchCount(t){
+  var n = 0;
+  RC_WATCH.lists.forEach(function(l){ if(l.has[t]) n++; });
+  return n;
+}
+function rcWatchTitle(t, n){
+  return n ? t + ' is on ' + n + (n === 1 ? ' watch list' : ' watch lists') : 'Add ' + t + ' to a watch list';
+}
 function rcWatchButtons(ticker){
   var t = rcWatchTicker(ticker);
   if(!t) return '';
-  return '<span class="rc-watch">' + ['stock', 'option'].map(function(list){
-    var on = !!RC_WATCH.lists[list][t], lab = RC_WATCH_LABELS[list];
-    return '<button type="button" data-rc-watch="' + list + '" data-ticker="' + rcEsc(t) + '" aria-pressed="' +
-      (on ? 'true' : 'false') + '" aria-label="' + rcEsc(t + ' on the ' + lab[1]) + '" title="' +
-      rcEsc((on ? 'Remove ' : 'Add ') + t + (on ? ' from the ' : ' to the ') + lab[1]) + '">' +
-      RC_WATCH_ICONS[list] + '</button>';
-  }).join('') + '</span>';
+  var n = rcWatchCount(t);
+  return '<span class="rc-watch"><button type="button" data-rc-watch-menu="" data-ticker="' + rcEsc(t) +
+    '" data-on="' + n + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + rcEsc(rcWatchTitle(t, n)) +
+    '" title="' + rcEsc(rcWatchTitle(t, n)) + '">' + RC_WATCH_ICON + '<span class="rc-watch-n" aria-hidden="true">' +
+    (n ? n : '') + '</span></button></span>';
 }
 function rcWatchMark(btn){
-  var list = btn.getAttribute('data-rc-watch'), t = rcWatchTicker(btn.getAttribute('data-ticker'));
-  var lab = RC_WATCH_LABELS[list];
-  if(!t || !lab) return;
-  var on = !!RC_WATCH.lists[list][t];
-  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  btn.setAttribute('title', (on ? 'Remove ' : 'Add ') + t + (on ? ' from the ' : ' to the ') + lab[1]);
+  var t = rcWatchTicker(btn.getAttribute('data-ticker'));
+  if(!t) return;
+  var n = rcWatchCount(t), title = rcWatchTitle(t, n);
+  btn.setAttribute('data-on', String(n));
+  btn.setAttribute('aria-label', title);
+  btn.setAttribute('title', title);
+  var badge = btn.querySelector ? btn.querySelector('.rc-watch-n') : null;
+  if(badge) badge.textContent = n ? String(n) : '';
 }
 function rcWatchSync(root){
-  var all = (root || document).querySelectorAll('[data-rc-watch]');
+  var all = (root || document).querySelectorAll('[data-rc-watch-menu]');
   for(var i = 0; i < all.length; i++) rcWatchMark(all[i]);
 }
 function rcWatchInit(board){
@@ -338,74 +372,182 @@ function rcWatchInit(board){
   return fetch('/api/watchlists', {cache: 'no-store', credentials: 'same-origin'}).then(function(r){ return r.json(); })
     .then(function(d){
       if(!d || !d.ok) return;
-      ['option', 'stock'].forEach(function(list){
-        // A toggle that answered before this read is newer than it: keep the toggle's state for that pair.
-        var mine = RC_WATCH.lists[list], next = {};
-        (d[list] || []).forEach(function(t){ next[String(t)] = true; });
-        Object.keys(RC_WATCH.toggled).forEach(function(key){
-          var at = key.indexOf(':'), t = key.slice(at + 1);
-          if(key.slice(0, at) !== list) return;
-          if(mine[t]) next[t] = true; else delete next[t];
+      var before = {};
+      RC_WATCH.lists.forEach(function(l){ before[l.id] = l.has; });
+      RC_WATCH.lists = (d.lists || []).map(function(l){
+        var has = {};
+        (l.tickers || []).forEach(function(t){ has[String(t)] = true; });
+        // A tick that answered before this read is newer than it: keep the tick's state for that ticker.
+        Object.keys(RC_WATCH.touched).forEach(function(key){
+          var at = key.lastIndexOf('|'), id = key.slice(0, at), t = key.slice(at + 1);
+          if(id !== String(l.id)) return;
+          if(RC_WATCH.touched[key]) has[t] = true; else delete has[t];
         });
-        RC_WATCH.lists[list] = next;
+        return {id: String(l.id), name: String(l.name || l.id), group: String(l.group || ''),
+                count: Number(l.count) || 0, has: has};
       });
       RC_WATCH.loaded = true;
       rcWatchSync(document);
+      if(RC_WATCH.open) rcWatchDraw();
     }).catch(function(){});
 }
-function rcWatchToggle(btn){
-  var list = btn.getAttribute('data-rc-watch'), t = rcWatchTicker(btn.getAttribute('data-ticker'));
-  if(!t || !RC_WATCH_LABELS[list]) return null;
-  btn.disabled = true;
-  return fetch('/api/watchlist/' + encodeURIComponent(list) + '/toggle/' + encodeURIComponent(t),
-               {method: 'POST', headers: {'X-RC-Panel': RC_WATCH.board}, credentials: 'same-origin'})
+function rcWatchMenuEl(){
+  var m = document.getElementById('rc-watch-menu');
+  if(m) return m;
+  var back = document.createElement('div');
+  back.className = 'rc-wm-back'; back.id = 'rc-watch-back'; back.hidden = true;
+  m = document.createElement('div');
+  m.className = 'rc-wm'; m.id = 'rc-watch-menu'; m.setAttribute('role', 'menu'); m.hidden = true;
+  document.body.appendChild(back);
+  document.body.appendChild(m);
+  return m;
+}
+function rcWatchDraw(){
+  var o = RC_WATCH.open, m = rcWatchMenuEl();
+  if(!o) return;
+  var t = o.ticker, html = '<div class="rc-wm-top"><b>' + rcEsc(t) + ' · Watch lists</b>' +
+    '<button type="button" class="rc-wm-x" data-rc-wm-close="" aria-label="Close">×</button></div>';
+  if(!RC_WATCH.loaded) html += '<div class="rc-wm-empty">Reading the lists…</div>';
+  RC_WATCH_GROUPS.forEach(function(g){
+    var rows = RC_WATCH.lists.filter(function(l){ return l.group === g; });
+    if(!rows.length) return;
+    html += '<div role="group" aria-label="' + rcEsc(g) + '"><div class="rc-wm-h" aria-hidden="true">' + rcEsc(g) +
+      '</div>' + rows.map(function(l){
+        var on = !!l.has[t], err = o.errors[l.id];
+        return '<button type="button" class="rc-wm-i" role="menuitemcheckbox" aria-checked="' + (on ? 'true' : 'false') +
+          '" data-rc-wm-list="' + rcEsc(l.id) + '"' + (o.busy[l.id] ? ' disabled' : '') +
+          (err ? ' data-error="1"' : '') + ' title="' + rcEsc((on ? 'Take ' + t + ' off ' : 'Put ' + t + ' on ') + l.name) +
+          '"><span class="rc-wm-box" aria-hidden="true"></span><span class="rc-wm-name">' + rcEsc(l.name) +
+          '</span><span class="rc-wm-c">' + (err ? 'not changed' : l.count) + '</span></button>';
+      }).join('') + '</div>';
+  });
+  if(RC_WATCH.loaded && !RC_WATCH.lists.length) html += '<div class="rc-wm-empty">No watch lists yet.</div>';
+  html += '<div class="rc-wm-msg" role="status">' + rcEsc(o.msg || '') + '</div>' +
+    '<a class="rc-wm-foot" href="/view/module_watchlists">Open Watch lists</a>';
+  m.innerHTML = html;
+}
+function rcWatchPlace(m, btn){
+  var r = btn.getBoundingClientRect(), w = m.offsetWidth || 320, h = m.offsetHeight || 0;
+  var vw = window.innerWidth || document.documentElement.clientWidth, vh = window.innerHeight || 800;
+  var left = Math.max(8, Math.min(r.right - w, vw - w - 8));
+  var top = r.bottom + 4;
+  if(top + h > vh - 8 && r.top - h - 4 >= 8) top = r.top - h - 4;
+  m.style.left = left + 'px';
+  m.style.top = Math.max(8, top) + 'px';
+}
+function rcWatchItems(){ return Array.prototype.slice.call(rcWatchMenuEl().querySelectorAll('.rc-wm-i')); }
+function rcWatchOpen(btn){
+  var t = rcWatchTicker(btn.getAttribute('data-ticker'));
+  if(!t) return;
+  if(RC_WATCH.open && RC_WATCH.open.btn === btn){ rcWatchClose(true); return; }
+  rcWatchClose(false);
+  RC_WATCH.open = {btn: btn, ticker: t, busy: {}, errors: {}, msg: ''};
+  btn.setAttribute('aria-expanded', 'true');
+  var m = rcWatchMenuEl();
+  m.setAttribute('aria-label', 'Watch lists for ' + t);
+  rcWatchDraw();
+  m.hidden = false;
+  document.getElementById('rc-watch-back').hidden = !(window.matchMedia && window.matchMedia('(max-width:600px)').matches);
+  rcWatchPlace(m, btn);
+  var first = rcWatchItems()[0];
+  if(first && first.focus) first.focus();
+}
+function rcWatchClose(refocus){
+  var o = RC_WATCH.open;
+  if(!o) return;
+  RC_WATCH.open = null;
+  o.btn.setAttribute('aria-expanded', 'false');
+  var m = document.getElementById('rc-watch-menu'), back = document.getElementById('rc-watch-back');
+  if(m) m.hidden = true;
+  if(back) back.hidden = true;
+  if(refocus && o.btn.focus) o.btn.focus();
+}
+function rcWatchTick(listId){
+  var o = RC_WATCH.open, t = o ? o.ticker : '', list = null;
+  RC_WATCH.lists.forEach(function(l){ if(l.id === listId) list = l; });
+  if(!o || !t || !list || o.busy[listId]) return null;
+  var want = !list.has[t];
+  o.busy[listId] = true; delete o.errors[listId]; o.msg = '';
+  rcWatchDraw();
+  return fetch('/api/watchlists/' + encodeURIComponent(listId) + '/tick/' + encodeURIComponent(t),
+               {method: 'POST', credentials: 'same-origin',
+                headers: {'X-RC-Panel': RC_WATCH.board, 'Content-Type': 'application/json'},
+                body: JSON.stringify({on: want})})
     .then(function(r){ return r.json().then(function(d){ return {status: r.status, d: d || {}}; }); })
     .then(function(res){
-      btn.disabled = false;
+      delete o.busy[listId];
       if(!res.d.ok){
-        btn.setAttribute('data-rc-watch-error', '1');
-        btn.setAttribute('title', 'Not changed: ' + String(res.d.error || ('HTTP ' + res.status)));
-        return;
+        o.errors[listId] = true;
+        o.msg = 'Not changed: ' + String(res.d.error || ('HTTP ' + res.status));
+      } else {
+        var on = !!res.d.on;
+        if(on && !list.has[t]) list.count++;
+        if(!on && list.has[t]) list.count = Math.max(0, list.count - 1);
+        if(on) list.has[t] = true; else delete list.has[t];
+        RC_WATCH.touched[listId + '|' + t] = on;
       }
-      btn.removeAttribute('data-rc-watch-error');
-      RC_WATCH.toggled[list + ':' + t] = true;
-      if(res.d.on) RC_WATCH.lists[list][t] = true; else delete RC_WATCH.lists[list][t];
       rcWatchSync(document);
+      if(RC_WATCH.open === o){ rcWatchDraw(); rcWatchRefocus(listId); }
     }).catch(function(e){
-      btn.disabled = false;
-      btn.setAttribute('data-rc-watch-error', '1');
-      btn.setAttribute('title', 'Not changed: ' + String(e));
+      delete o.busy[listId];
+      o.errors[listId] = true;
+      o.msg = 'Not changed: ' + String(e);
+      if(RC_WATCH.open === o){ rcWatchDraw(); rcWatchRefocus(listId); }
     });
+}
+function rcWatchRefocus(listId){
+  rcWatchItems().forEach(function(b){ if(b.getAttribute('data-rc-wm-list') === listId && b.focus) b.focus(); });
 }
 // Capture phase: a row or card that opens on click must not also open when its ticker's button is pressed.
 document.addEventListener('click', function(ev){
-  var btn = ev.target && ev.target.closest ? ev.target.closest('[data-rc-watch]') : null;
-  if(!btn) return;
-  ev.preventDefault();
-  ev.stopPropagation();
-  if(!btn.disabled) rcWatchToggle(btn);
+  var el = ev.target && ev.target.closest ? ev.target : null;
+  if(!el) return;
+  var btn = el.closest('[data-rc-watch-menu]');
+  if(btn){ ev.preventDefault(); ev.stopPropagation(); rcWatchOpen(btn); return; }
+  var item = el.closest('[data-rc-wm-list]');
+  if(item){ ev.preventDefault(); ev.stopPropagation(); rcWatchTick(item.getAttribute('data-rc-wm-list')); return; }
+  if(el.closest('[data-rc-wm-close]')){ ev.preventDefault(); rcWatchClose(true); return; }
+  if(RC_WATCH.open && !el.closest('#rc-watch-menu')) rcWatchClose(false);
 }, true);
+document.addEventListener('keydown', function(ev){
+  if(!RC_WATCH.open) return;
+  if(ev.key === 'Escape'){ ev.preventDefault(); rcWatchClose(true); return; }
+  if(ev.key === 'Tab'){ rcWatchClose(false); return; }
+  if(ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp' && ev.key !== 'Home' && ev.key !== 'End') return;
+  var items = rcWatchItems();
+  if(!items.length) return;
+  ev.preventDefault();
+  var at = items.indexOf(document.activeElement), next;
+  if(ev.key === 'Home') next = 0;
+  else if(ev.key === 'End') next = items.length - 1;
+  else next = (at + (ev.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+  items[next].focus();
+});
+// Guarded: a board's own tests run the page under a small fake DOM that may have no window events.
+if(typeof window !== 'undefined' && window.addEventListener){
+  window.addEventListener('resize', function(){ if(RC_WATCH.open) rcWatchPlace(rcWatchMenuEl(), RC_WATCH.open.btn); });
+  window.addEventListener('scroll', function(){ if(RC_WATCH.open) rcWatchPlace(rcWatchMenuEl(), RC_WATCH.open.btn); }, true);
+}
 """
 
 
 def watch_buttons_html(ticker, on=()) -> str:
-    """The button pair for one ticker, rendered on the server. ``on`` names the lists the board already knows the
-    ticker is on (LEAPS knows its stock list); ``rcWatchInit`` re-marks every pair from the live lists anyway."""
+    """The "add to list" button for one ticker, rendered on the server. ``on`` names lists the board already
+    knows hold the ticker (LEAPS knows its stock list), so the count shows before the live read; ``rcWatchInit``
+    re-marks every button from the live lists anyway. With ``on`` empty this is exactly ``rcWatchButtons``'s."""
     t = str(ticker if ticker is not None else "").strip().upper()
     if not _WATCH_TICKER_RE.fullmatch(t):
         return ""
     e = html.escape(t, quote=True)
-    buttons = "".join(
-        f'<button type="button" data-rc-watch="{lst}" data-ticker="{e}" '
-        f'aria-pressed="{"true" if lst in on else "false"}" aria-label="{e} on the {name}" '
-        f'title="{"Remove" if lst in on else "Add"} {e} {"from" if lst in on else "to"} the {name}">'
-        f'{WATCH_ICONS[lst]}</button>'
-        for lst, (label, name) in WATCH_LABELS.items())
-    return f'<span class="rc-watch">{buttons}</span>'
+    n = len(tuple(on or ()))
+    title = (f"{e} is on {n} watch list{'' if n == 1 else 's'}" if n else f"Add {e} to a watch list")
+    return (f'<span class="rc-watch"><button type="button" data-rc-watch-menu="" data-ticker="{e}" data-on="{n}" '
+            f'aria-haspopup="menu" aria-expanded="false" aria-label="{title}" title="{title}">{WATCH_ICON}'
+            f'<span class="rc-watch-n" aria-hidden="true">{n if n else ""}</span></button></span>')
 
 
 def watchlist_html(board: str) -> str:
-    """Mount the pair on a board once: the CSS, the snippet and ``rcWatchInit(board)``. ``board`` becomes the
+    """Mount the menu on a board once: the CSS, the snippet and ``rcWatchInit(board)``. ``board`` becomes the
     ``X-RC-Panel`` value, so the list rows say which board added them."""
     from .html_safe import script_json
     return f"{WATCHLIST_CSS}\n<script>{WATCHLIST_JS}\nrcWatchInit({script_json(str(board))});\n</script>"
@@ -428,7 +570,7 @@ def filters_meta(board: str, **fields) -> dict:
 __all__ = [
     "FILTERS_JS", "FILTERS_CSS", "filters_bar_html", "control_html", "combobox_html",
     "filters_meta",
-    "WATCHLIST_JS", "WATCHLIST_CSS", "WATCH_LABELS", "WATCH_ICONS", "watch_buttons_html", "watchlist_html",
+    "WATCHLIST_JS", "WATCHLIST_CSS", "WATCH_ICON", "watch_buttons_html", "watchlist_html",
     "JOB_JS",
     "HELP_CSS", "help_html",
     "THEME_TOKENS", "THEME_SCALE", "THEME_CSS", "THEME_JS", "THEME_STORAGE_KEY",

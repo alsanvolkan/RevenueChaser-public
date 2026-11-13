@@ -1,4 +1,5 @@
-"""Every board that renders tickers mounts the shared watch-list pair (PR 4, D2); the others say why not.
+"""Every board that renders tickers mounts the shared watch-list button (PR 4, D2; one "add to list" menu since #786
+step 5); the others say why not.
 
 Three checks per board, on the hostile fixtures of ``board_fixtures`` (every ticker there is ``H(...)``):
 
@@ -51,7 +52,9 @@ WITHOUT_PAIR = {
     "module_watchlists": "the board is avo's own named lists; a row here is already on a list",
 }
 
-_SERVER_BUTTON = re.compile(r'data-rc-watch="(?:option|stock)" data-ticker="([^"]*)"')
+# ``[^"']``: the client template in the mounted script spells the same attributes around ``' + rcEsc(t) + '``; a
+# rendered button's ticker never holds a bare quote (the escaper turns one into ``&#39;``).
+_SERVER_BUTTON = re.compile(r'data-rc-watch-menu="" data-ticker="([^"\']*)"')
 
 
 def test_every_board_is_classified():
@@ -115,7 +118,7 @@ def test_implied_probability_shows_the_pair_for_its_focal_ticker():
     page = render_oipd_dashboard({"ticker": "AAPL", "asof": "2026-09-01", "spot": 100.0, "n_contracts": 10,
                                   "horizon_days": 30, "risk_free": 0.04, "error": None, "warnings": [],
                                   "expiries": []})
-    assert _SERVER_BUTTON.findall(page) == ["AAPL", "AAPL"]
+    assert _SERVER_BUTTON.findall(page) == ["AAPL"]
     assert 'rcWatchInit("oipd");' in page
 
 
@@ -127,5 +130,5 @@ def test_financials_shows_the_pair_for_the_company_and_each_peer():
              "implied": {"equity_pe": 1.0e9, "per_share_pe": 50.0}}
     page = build_report_html({"ticker": "TEST", "financials": fin, "modules": {"comps": comps}, "warnings": []})
     tickers = _SERVER_BUTTON.findall(page)
-    assert "TEST" in tickers and "PEER" in tickers and len(tickers) == 4    # the hostile peer gets none
+    assert "TEST" in tickers and "PEER" in tickers and len(tickers) == 2    # the hostile peer gets none
     assert "&lt;b&gt;x&lt;/b&gt;" in page and 'rcWatchInit("financials");' in page
