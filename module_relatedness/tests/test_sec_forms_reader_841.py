@@ -267,7 +267,10 @@ def test_the_extras_offer_both_blocks_and_leave_out_an_absent_one(layer, monkeyp
 def test_a_failed_notes_read_keeps_the_customer_lines(layer, monkeypatch):
     """Review of PR #842, finding 7: one failed notes read dropped the filing sentences and the XBRL customers of
     a profile that is then paid for and never redone (the context is outside the input hash)."""
-    def broken(*a, **k):
+    asked = []
+
+    def broken(ciks, local_name=None, **k):
+        asked.append(local_name)
         raise RuntimeError("no filing_note table")
     monkeypatch.setattr(read, "form_notes", broken)
     monkeypatch.setattr(read, "customers", lambda cik: [{"customer": "Acme", "share": 0.2, "benchmark": "revenue",
@@ -275,11 +278,15 @@ def test_a_failed_notes_read_keeps_the_customer_lines(layer, monkeypatch):
     extras = engine._filing_extras("789019", BUSINESS)
     assert extras["xbrl_customers"] == ["Acme: 20.0% of revenue"]
     assert "segment_block" not in extras and "concentration_block" not in extras
+    assert asked == [name for _key, name in engine.NOTE_BLOCKS]      # both were tried, each on its own
 
 
-def test_the_note_blocks_are_outside_the_input_hash(rawstore_tmp_db, monkeypatch):
-    """Why ``v3d`` exists: a block that arrives later does not restale the profile, so only a version bump sends it
-    to the companies already profiled."""
+def test_the_two_notes_asked_for_are_the_filings_own_tag_names_and_stay_outside_the_hash(rawstore_tmp_db,
+                                                                                          monkeypatch):
+    assert dict(engine.NOTE_BLOCKS) == {"segment_block": "SegmentReportingDisclosureTextBlock",
+                                        "concentration_block": "ConcentrationRiskDisclosureTextBlock"}
+    # Why ``v3d`` exists: a block that arrives later does not restale the profile, so only a version bump sends it
+    # to the companies already profiled. (A property of the base too, so it is pinned here and not on its own.)
     _seed("NVDA", long_body("We design gpus"))
     monkeypatch.setattr(engine, "_context", lambda t, cik, source=None: {})
     monkeypatch.setattr(engine, "_filing_extras", lambda cik, text: {})
@@ -287,11 +294,6 @@ def test_the_note_blocks_are_outside_the_input_hash(rawstore_tmp_db, monkeypatch
     monkeypatch.setattr(engine, "_filing_extras", lambda cik, text: {"segment_block": "Two segments."})
     with_block = engine._prepare("NVDA", "Nvidia", "1")
     assert with_block["context"] == {"segment_block": "Two segments."} and with_block["hash"] == bare["hash"]
-
-
-def test_the_two_notes_asked_for_are_the_filings_own_tag_names():
-    assert dict(engine.NOTE_BLOCKS) == {"segment_block": "SegmentReportingDisclosureTextBlock",
-                                        "concentration_block": "ConcentrationRiskDisclosureTextBlock"}
 
 
 def test_a_stored_profile_reads_stale_after_the_version_bump():
