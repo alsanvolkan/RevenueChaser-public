@@ -246,9 +246,10 @@ def test_ours_2_is_declared_and_reachable_like_any_other_version():
     assert sec_sections.DEFAULT_VERSION == OURS_1, "a new version does not become the default by existing"
     assert sec_sections.rule(OURS_2).version == OURS_2
     assert sec_sections.rule(OURS_2).slice_item is sec_sections._slice_item_ours_2
-    # #756 is where the AIF block improves; a version that moved two rules at once would leave nobody able to say
-    # which of them moved a stored section.
-    assert sec_sections.rule(OURS_2).aif_business is sec_sections.rule(OURS_1).aif_business
+    # Until #756 this was ours-1's own function, so that one PR moved one rule; #756 gave ours-2 its own 40-F
+    # business rule, and the two are now separate functions. test_sec_sections_forty_f.py is where it is tested.
+    assert sec_sections.rule(OURS_2).aif_business is sec_sections._aif_business_ours_2
+    assert sec_sections.rule(OURS_2).aif_business is not sec_sections.rule(OURS_1).aif_business
 
 
 def test_ours_2_adds_its_own_patterns_rather_than_editing_the_shared_ones():
@@ -436,6 +437,9 @@ def test_the_only_cases_where_ours_2_differs_from_ours_1_are_the_three_named_def
         "split_word_item_1a",        # VFF's "ITE M 1A": overrun 27,030 -> ok 26,999
         "over_the_cap",              # the cap is gone: capped 200,000 -> ok 239,999
         "suspect_inner_item_header",  # same text, honest label: ok -> overrun
+        # #756, the 40-F rule: a title ours-1 does not know, and the AIF cap removed with the item one.
+        "aif_description_of_business",  # one of the 28: None -> 26,999
+        "aif_over_the_cap",             # 200,000 -> 239,999
     }
 
 
