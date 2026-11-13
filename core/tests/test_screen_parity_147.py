@@ -32,6 +32,9 @@ golden never covers the fundamentals layer or the trailing-year Quality path: th
 files; Opus review N2).
 PR 2 (the universe is Tiers A and B whole) added Swing's type filter to its ``settings`` block
 (``operating_only: true``, the default); the re-capture differed by that key only.
+#737 (debt-free inference) added the additive per-candidate ``debt_basis`` key; the five Fundamentals candidates
+all read ``filed`` here (the scenario's filers tag a total), nothing else in the snapshot moved, and the key was
+edited into the golden by hand the same way as the ones above.
 To re-capture on another commit, run this file with ``RC_PARITY_CAPTURE=<path>`` (it writes the snapshot there
 instead of comparing).
 """
