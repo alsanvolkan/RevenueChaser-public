@@ -238,3 +238,38 @@ def test_the_note_need_answers_by_local_name_across_taxonomies(sec):
     _cut()
     assert serve.ask("sec.note", ciks=[MSFT], local_name="DebtDisclosureTextBlock").rows
     assert not serve.ask("sec.note", ciks=[MSFT], local_name="SegmentReportingDisclosureTextBlock").rows
+
+
+# ── the suspect flag on the business row (#835) ─────────────────────────────────────────────────────────────────
+
+def _k_ending_in_a_cross_reference() -> str:
+    """A 10-K whose Item 1 ends on 'See Item 1A' -- the shape the 10-K reading report found labelled ``ok`` while
+    the cut was wrong (``_TAIL_REF``/S4). Built from the note fixture's header so the build still reads its one
+    note, with the business body replaced."""
+    body = ("<p>Item 1. Business</p><p>Item 1A. Risk Factors</p><p>PART I</p><p>Item 1. Business</p>"
+            "<p>We develop software and cloud services. Our customers include enterprises. " * 80
+            + " See</p><p>Item 1A. Risk Factors</p><p>Risks.</p></body></html>")
+    return nf.CONTINUED.replace("\n</body></html>", body.split("</body></html>")[0])
+
+
+def test_the_business_row_carries_the_suspect_flag_when_the_cut_ends_in_a_reference(sec):
+    """#835: ``sec_forms`` wrote the 10-K/20-F business row with the cutter's bare label and no ``;suspect`` flag,
+    so a wrong-but-``ok`` cut reached Relatedness and Value Chain with nothing telling them to look again. The row
+    now carries :data:`forms.SECTIONS_VERSION`'s own flags; a cut that ends on a cross-reference is ``ok;suspect:S4``.
+    """
+    _stored(sec, documents={"msft-10k.htm": _k_ending_in_a_cross_reference()})
+    _cut()
+    quality, = q("SELECT quality FROM filing_section WHERE cik = ? AND section = 'business'", MSFT)[0]
+    assert quality.startswith("ok;suspect:"), quality
+    assert "S4" in quality, quality
+    # The flag rides in the label text; the cut itself is unchanged, so a reader that only wants the cut strips it.
+    assert forms.sec_sections.base(quality) == "ok"
+
+
+def test_a_clean_business_cut_has_no_flag(sec):
+    """The default MSFT 10-K is a short document, so S2 (a tiny slice of a huge filing) cannot fire and the
+    signals that need it stay off: the row is a bare ``ok``, the flag added only when a slice still looks wrong."""
+    _stored(sec)
+    _cut()
+    quality, = q("SELECT quality FROM filing_section WHERE cik = ? AND section = 'business'", MSFT)[0]
+    assert ";suspect" not in quality, quality

@@ -1428,3 +1428,64 @@ def test_a_sentence_that_names_the_form_is_not_a_cross_reference_index():
                                  version=OURS_2)[1] == "crossref"
     assert sec_sections.cut_item("About us. " + sentence + BODY[:5000], "10-K",
                                  version=OURS_2)[1] == "missing"
+
+
+# ── the per-version suspect flagger (#835) ──────────────────────────────────────────────────────────────────────
+#
+# ``sec_forms`` now flags its 10-K/20-F business rows (it only flagged the 40-F before), and the flagger is
+# ``ours-1``'s. Two of its seven signals are undefined for ``ours-2`` and were measured raising false alarms on
+# the 4,988 stored 10-K/20-F filings (13 Nov 2026, real documents on disk, read-only): S8 marks every long slice
+# because ``ours-2`` lifts the 200,000 cap, and S6 marks a correct slice whose Item 1 holds a sub-item heading
+# (``ours-2`` answers that in the cut, as ``overrun``, so no ``ok`` slice reaches the flagger holding one). The
+# version carries which signals it defines (:attr:`sec_sections.Rule.signals`), and :func:`sec_sections.cut_flag`
+# reads it, so a stored row's ``rules_version`` names its flagger as well as its cut.
+
+_LONG = "We make widgets and sell them worldwide. " * 6_000          # > MAX_ITEM_CHARS, one clean Item 1
+_LONG_K = "Item 1. Business\n" + _LONG + "\nItem 1A. Risk Factors\nRisky.\n"
+# A correct Item 1 that carries an 8-K-style sub-item heading inside it (PCVX, #755): ``ours-1``'s S6 reads the
+# sub-item as a section end and flags it; ``ours-2`` cuts past it and the slice is a clean ``ok``.
+_SUBITEM_K = ("Item 1. Business\n" + BODY + "\nItem 2.01 Completion of Acquisition of Assets\n" + BODY
+              + "\nItem 1A. Risk Factors\n")
+
+
+def test_ours_2_does_not_raise_s8_on_a_long_slice_but_bare_flag_does():
+    """S8 compares the slice to ``MAX_ITEM_CHARS``. ``ours-2`` caps nothing, so a long slice is normal, not
+    suspect -- 160 of the 173 slices the bare flagger marked on the stored filings were this false alarm."""
+    item, quality = sec_sections.cut_item(_LONG_K, "10-K", version=OURS_2)
+    assert quality == "ok" and len(item) >= sec_sections.MAX_ITEM_CHARS
+    assert sec_sections.cut_flag(quality, _LONG_K, item, version=OURS_2) == "ok"
+    assert "S8" in sec_sections.flag(quality, _LONG_K, item)          # the bare flagger still raises it
+
+
+def test_ours_2_does_not_raise_s6_on_a_slice_holding_a_sub_item_but_bare_flag_does():
+    """S6 reads a sub-item as a heading of another item. ``ours-2`` cuts correctly past it, so its ``ok`` slices
+    never hold one; the signal only ever fired as a false alarm on this version, so it is not defined for it."""
+    item, quality = sec_sections.cut_item(_SUBITEM_K, "10-K", version=OURS_2)
+    assert quality == "ok" and "Item 2.01" in item
+    assert sec_sections.cut_flag(quality, _SUBITEM_K, item, version=OURS_2) == "ok"
+    assert "S6" in sec_sections.flag(quality, _SUBITEM_K, item)       # the bare flagger still raises it
+
+
+def test_ours_2_still_raises_the_signals_it_defines():
+    """The five defined signals (S1-S5) are the point of the flag: a cut that ends on a cross-reference is
+    ``ok;suspect:S4`` under both versions. BAT's 20-F Item 4 ends "...refer to notes 13, 14 and 27 in Part III"
+    (real filing 1303523, 13 Nov 2026), the shape S4 is for."""
+    text = ("Item 1. Business\n" + BODY + "\nAvailable Information\nWe file with the SEC. "
+            "refer to notes 13, 14 and 27 in Part III\nItem 1A. Risk Factors\n")
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert sec_sections.cut_flag(quality, text, item, version=OURS_2) == "ok;suspect:S4"
+
+
+def test_the_signal_sets_are_the_versions_own_and_s6_s8_are_ours_1_only():
+    """The sets are declared, not inferred: ``ours-1`` keeps every signal (so every existing caller of ``flag``
+    is unchanged), and ``ours-2`` drops exactly S6 and S8."""
+    assert sec_sections.rule(OURS_1).signals == sec_sections.SIGNALS_OURS_1
+    assert sec_sections.rule(OURS_2).signals == sec_sections.SIGNALS_OURS_2
+    assert set(sec_sections.SIGNALS_OURS_1) - set(sec_sections.SIGNALS_OURS_2) == {"S6", "S8"}
+
+
+def test_cut_flag_defaults_to_ours_1_and_equals_bare_flag_there():
+    """``cut_flag`` with no version is ``DEFAULT_VERSION`` (``ours-1``), whose signal set is every signal, so it
+    is byte-identical to the bare :func:`flag` every current caller uses."""
+    item, quality = sec_sections.cut_item(_LONG_K, "10-K", version=OURS_1)
+    assert sec_sections.cut_flag(quality, _LONG_K, item) == sec_sections.flag(quality, _LONG_K, item)

@@ -126,6 +126,17 @@ def _span(whole: str, part: str) -> tuple[int | None, int | None]:
     return (i, i + len(part)) if i >= 0 else (None, None)
 
 
+def _flag(quality: str, text: str, item: str | None, form: str) -> str:
+    """``quality`` with :data:`SECTIONS_VERSION`'s own ``;suspect`` flags (#835).
+
+    Every business row carries them, not the 40-F's alone: ``module_relatedness.locator.asks`` and Value Chain
+    read this column, and a 10-K whose cut is wrong but labelled ``ok`` is the case the flags exist for -- 24 of
+    the 29 wrong cuts of the 10-K reading report were labelled ``ok``. Which signals a version defines is
+    :attr:`sec_sections.Rule.signals`, so the row's ``rules_version`` says what was computed.
+    """
+    return sec_sections.cut_flag(quality, text, item, form, version=SECTIONS_VERSION)
+
+
 def sections_of(html: str, form: str, *, exhibit: bool = False, by_name: object = None) -> list[tuple]:
     """``(section, text, quality, method, start_char, end_char)`` per section of one document.
 
@@ -147,11 +158,11 @@ def sections_of(html: str, form: str, *, exhibit: bool = False, by_name: object 
         # section is the Annual Information Form block when the primary document keeps one.
         aif = sec_sections.cut_aif_business(text, version=SECTIONS_VERSION)
         if aif:
-            out.append((BUSINESS, aif, sec_sections.flag("ok", text, aif, form), AIF, *_span(text, aif)))
+            out.append((BUSINESS, aif, _flag("ok", text, aif, form), AIF, *_span(text, aif)))
         return out
     item, quality = sec_sections.cut_item(text, form, version=SECTIONS_VERSION)
     if item:
-        out.append((BUSINESS, item, quality, HEADER, *_span(text, item)))
+        out.append((BUSINESS, item, _flag(quality, text, item, form), HEADER, *_span(text, item)))
     return out
 
 

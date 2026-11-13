@@ -795,15 +795,27 @@ def base(quality) -> str | None:
     return quality.split(";", 1)[0] if isinstance(quality, str) else quality
 
 
-def flag(quality: str, text: str, item: str | None, form: str = "10-K") -> str:
+#: The signals ``ours-1``'s flagger raises -- all of them, which is what every caller of :func:`flag` has had.
+SIGNALS_OURS_1 = ("S1", "S2", "S3", "S4", "S5", "S6", "S8")
+#: And ``ours-2``'s (#835). Two of the seven are **not defined** for it, so they are not computed rather than
+#: computed and ignored:
+#:
+#: - **S8** compares the slice against :data:`MAX_ITEM_CHARS`. ``ours-2`` caps nothing (:attr:`Rule.caps` is
+#:   False), so the length means nothing there: it would flag every long section, right or wrong.
+#: - **S6** asks whether the slice holds another item's heading. ``ours-2`` asks that in the **cut**
+#:   (:func:`_holds_another_item` in :func:`_quality_ours_2`) and answers ``overrun``, so no ``ok`` slice of its
+#:   can hold one and the signal is dead on arrival -- while ``ours-1``'s own reading of it (:data:`_LINE_END`,
+#:   which takes a sub-item for a heading) is live and wrong, marking PCVX's correctly cut Item 1 suspect.
+SIGNALS_OURS_2 = ("S1", "S2", "S3", "S4", "S5")
+
+
+def flag(quality: str, text: str, item: str | None, form: str = "10-K", *,
+         signals: tuple[str, ...] = SIGNALS_OURS_1) -> str:
     """``quality`` with ``;suspect:<signals>`` added when an ``ok`` slice of ``text`` still looks wrong.
 
-    **This is ``ours-1``'s flagger, and the only one there is.** S6 reads :data:`_LINE_END`, so a sub-item is a
-    heading to it: it marks PCVX's correctly cut Item 1 ``ok;suspect:S6``, undoing at the label what ``ours-2``
-    fixed in the cut. S8 compares the slice against :data:`MAX_ITEM_CHARS`, which ``ours-2`` does not cap at, so
-    every long ``ours-2`` slice is ``ok;suspect:S8``. The right place for a per-version flagger is a ``flag``
-    member on :class:`Rule`, and the caller that needs it is the ``sec_forms`` layer (#757); until then nothing
-    calls this on an ``ours-2`` slice, and a caller that starts to must read this paragraph first.
+    ``signals`` is the version's own set -- :data:`SIGNALS_OURS_1` by default, so every caller that had this
+    function keeps the label it had. A caller that stores a row names its version instead and reaches this
+    through :func:`cut_flag`, because which signals are defined is a property of the cut, not of the filing.
     """
     if quality != "ok":
         return quality
@@ -820,8 +832,9 @@ def flag(quality: str, text: str, item: str | None, form: str = "10-K") -> str:
         "S6": any(m.group(1).lower() != own and not _is_ref(item, m) for m in _LINE_END.finditer(item)),
         "S8": len(item) >= MAX_ITEM_CHARS,
     }
+    s = {k: v for k, v in s.items() if k in signals}
     on = [k for k, v in s.items() if v]
-    if any(s[k] for k in ("S1", "S4", "S5", "S6", "S8")) or (s["S2"] and s["S3"]):
+    if any(s.get(k) for k in ("S1", "S4", "S5", "S6", "S8")) or (s.get("S2") and s.get("S3")):
         return "ok;suspect:" + ",".join(on)
     return quality
 
@@ -1691,6 +1704,10 @@ class Rule:
     #: for it here would be inventing behaviour. :func:`cut_aif_business_q` raises for such a version rather
     #: than making one up.
     aif_business_q: object | None = None
+    #: The suspect signals :func:`flag` may raise for this version's slices (#835). The version is what says
+    #: which are defined, so a stored row's ``rules_version`` names its flagger as well as its cut, and no
+    #: second column is needed to record which flags were computed.
+    signals: tuple[str, ...] = SIGNALS_OURS_1
 
 
 RULES: dict[str, Rule] = {
@@ -1698,7 +1715,7 @@ RULES: dict[str, Rule] = {
     # ``ours-2``'s AIF block is its own since #756: six start titles and ten stop titles adapted from
     # edgartools (the provenance block above it), our own section end, and a label.
     OURS_2: Rule(version=OURS_2, slice_item=_slice_item_ours_2, aif_business=_aif_business_ours_2,
-                 caps=False, aif_business_q=_aif_business_ours_2_q),
+                 caps=False, aif_business_q=_aif_business_ours_2_q, signals=SIGNALS_OURS_2),
 }
 
 
@@ -1730,6 +1747,16 @@ def rule(version: str | None | object = _UNSET) -> Rule:
 def cut_item(text: str, form: str = "10-K", *, version: str | None | object = _UNSET) -> tuple[str | None, str]:
     """``(item_text, quality)`` of the business item in ``text``, cut by ``version``."""
     return rule(version).slice_item(text, form)
+
+
+def cut_flag(quality: str, text: str, item: str | None, form: str = "10-K", *,
+             version: str | None | object = _UNSET) -> str:
+    """``quality`` with ``version``'s own ``;suspect`` flags -- what a layer that stores the row calls.
+
+    :func:`flag` raises every signal, which is ``ours-1``'s set; this picks the set the version defines
+    (:attr:`Rule.signals`). A row written through here can be read back by its ``rules_version`` alone.
+    """
+    return flag(quality, text, item, form, signals=rule(version).signals)
 
 
 def cut_aif_business(text: str, *, version: str | None | object = _UNSET) -> str | None:
