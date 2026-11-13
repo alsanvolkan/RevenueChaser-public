@@ -472,7 +472,7 @@ def _ref_ours_2(text: str, m: re.Match, key: str = "10-K") -> bool:
 #: Just past the item's number inside a match, wherever the match itself ends. The four patterns end in
 #: different places -- the line-end one after the number, the starts and the stops after the **title** -- and
 #: every test below asks what follows the *number*, so each of them needs this and not ``m.end()``.
-_NUMBER = re.compile(rf"(?i)[^\S\n]*{_ITEM}s?{_NUM_SEP}(?:[0-9]+(?:[a-c]|[^\S\n][a-c](?=[.:{_DASH}]))?|i[a-c]?)")
+_NUMBER = re.compile(rf"(?i)[^\S\n]*{_ITEM}s?{_NUM_SEP}(?:[0-9]+(?:[a-c]|[^\S\n][a-c](?=[.:{_DASH}]))?|[il][a-c]?)")
 
 
 def _after_number(text: str, m: re.Match) -> int:
@@ -598,6 +598,13 @@ def _cites_its_title(text: str, m: re.Match, line_end: int) -> bool:
     return bool(_CLAUSE_GOES_ON.match(tail) or _UNOPENED_CLOSER.match(tail) or _A_LETTER.search(tail))
 
 
+#: ``ours-1``'s :data:`_TOC_NEXT` spelled with the separators :data:`_NUM_SEP` allows. Without it the start
+#: pattern reads "ITEM - 1." and the contents test does not, so a filing whose contents page is spelled the way
+#: its heading is passes the guard and the contents entry is cut as the body -- ``overrun``, from the contents
+#: page (Fable review, 13 Nov 2026). A copy, because :data:`_TOC_NEXT` is the board's.
+_TOC_NEXT_2 = re.compile(rf"(?i){_ITEM}{_GAP}*(?:[.:|{_DASH}]{_GAP}*)?(?:1{_GAP}?a|2|4{_GAP}?a|5)\b")
+
+
 def _toc_next_ours_2(text: str, m: re.Match, key: str = "10-K") -> bool:
     """True when a later item is **listed** right after ``m``, as a contents page lists it.
 
@@ -611,7 +618,7 @@ def _toc_next_ours_2(text: str, m: re.Match, key: str = "10-K") -> bool:
     reads.
     """
     return any(not _words_before_ref(text, n, key)
-               for n in _TOC_NEXT.finditer(text, m.end(), m.end() + 400))
+               for n in _TOC_NEXT_2.finditer(text, m.end(), m.end() + 400))
 
 
 def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
@@ -677,8 +684,12 @@ def _holds_another_item(item: str, own: str) -> bool:
 #: 14-24, 186-188, 300-313, 355-357 (Note 2)" -- so there is no one span to cut and no caption to find it by.
 #: ``crossref`` says that, where ``short`` and ``missing`` read as a cut that went wrong and invite another try.
 #: The ``whole`` row still holds the document, so nothing is lost by not cutting it.
-_INDEXED = re.compile(r"(?i)(?:cross[\s-]{0,3}reference|item\s{1,3}number)[\s\S]{0,120}?form\s{0,3}(?:10-k|20-f)"
-                      r"|form\s{0,3}(?:10-k|20-f)[\s\S]{0,60}?(?:cross[\s-]{0,3}reference|item\s{1,3}number)")
+#: Both halves begin a line, because the table has a heading of its own and a sentence does not. Unanchored, the
+#: first branch read an ordinary bank's "This cross-reference index to Guide 3 disclosures in this Annual Report
+#: on Form 10-K" as an index and told a wrongly-short cut not to try again (Fable review, 13 Nov 2026).
+_INDEXED = re.compile(r"(?im)^[^\S\n]*(?:sec[^\S\n]+)?form[^\S\n]*(?:10-k|20-f)[^\n]{0,60}"
+                      r"(?:cross(?:[^\S\n]|-){0,3}reference|item[^\S\n]{1,3}number)"
+                      r"|^[^\S\n]*cross(?:[^\S\n]|-){0,3}references?[\s\S]{0,120}?form[^\S\n]*(?:10-k|20-f)")
 
 
 def _quality_ours_2(item: str, own: str, closed: bool, text: str = "") -> str:

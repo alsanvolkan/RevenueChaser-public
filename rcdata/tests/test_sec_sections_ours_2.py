@@ -1347,7 +1347,7 @@ def test_brt_an_ell_written_for_the_one_is_still_item_1():
             + "\nItem 1A. Risk Factors.\n" + "Risky. " * 400)
     item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
     # The filer's own full stop after "Business." is the first character of the body.
-    assert quality == "ok" and item.lstrip(". ").startswith("General") and "Risky." not in item
+    assert quality == "ok" and item.lstrip(". \n").startswith("General") and "Risky." not in item
 
 
 def test_southern_missouri_zero_width_spaces_inside_a_heading_do_not_hide_it():
@@ -1385,7 +1385,8 @@ def test_mcdonalds_an_annual_report_with_a_form_index_is_crossref_and_not_short(
     report = "About McDonald's\n" + BODY[:5000] + "\n" + index
     assert sec_sections.cut_item(report, "10-K", version=OURS_2)[1] == "crossref"
     assert sec_sections.cut_item(report, "10-K", version=OURS_1)[1] in ("short", "missing")
-    # Without the index the same unreadable filing is still ``short``: the label is the table, not the length.
+    # Without the index the same unreadable filing keeps the label its cut earns: here there is no start at
+    # all, so ``missing``. The table is what makes it ``crossref``, not the length.
     assert sec_sections.cut_item("About McDonald's\n" + BODY[:5000], "10-K", version=OURS_2)[1] == "missing"
 
 
@@ -1396,3 +1397,21 @@ def test_hsbc_an_index_headed_item_number_and_caption_is_one_too():
             + "\nForm 20-F Item Number and Caption\nLocation\nPage\n"
               "4. Information on the Company\nStrategic report\n14-24\n")
     assert sec_sections.cut_item(text, "20-F", version=OURS_2)[1] == "crossref"
+
+
+def test_a_contents_page_spelled_the_way_the_heading_is_is_still_a_contents_page():
+    """The start pattern learned "ITEM - 1." and the contents test has to learn it too, or the contents entry
+    becomes the body: `overrun`, cut from the index (Fable review of this change)."""
+    text = ("ITEM - 1. Business 3\nITEM - 1A. Risk Factors 12\nITEM - 1B. Unresolved Staff Comments 35\n"
+            "\nPART I\nITEM - 1. Business\n" + BODY[:5000] + "\nITEM - 1A. Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("We make widgets") and "Risky." not in item
+
+
+def test_a_sentence_that_names_the_form_is_not_a_cross_reference_index():
+    """A bank's Guide 3 index -- "This cross-reference index to Guide 3 disclosures in this Annual Report on
+    Form 10-K" -- is a sentence, not the table. Read unanchored it turned a wrongly-short cut into ``crossref``,
+    which tells the next run there is nothing to find (Fable review of this change)."""
+    text = ("Our business. This cross-reference index to Guide 3 disclosures in this Annual Report on Form 10-K"
+            " is provided for convenience. " + BODY[:5000])
+    assert sec_sections.cut_item(text, "10-K", version=OURS_2)[1] == "missing"
