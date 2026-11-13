@@ -426,7 +426,7 @@ def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) ->
         # (``NotesPayableCurrent`` 1.0 m) with a real borrowing. A filer that tagged debt at its year end is not a
         # filer that tagged nothing, and a quarter that simply did not repeat the tag does not say it repaid.
         q = _quarter_at(quarterly or [], ttm_rec["period"])
-        ttm = _quality_of(ttm_rec, debt_free=_debt.debt_free(q) and _debt.debt_free(a))
+        ttm = _quality_of(ttm_rec, debt_free=_debt.debt_free(q) and _debt.no_interest(a))   # MUTANT M8
         # The year's net income stays (P/E reads its own TTM, ``_ttm_metrics``); P/B reads the newest equity.
         if all(ttm[k] is not None or fy[k] is None for k in ("gross_margin", "roic", "net_debt_ebitda", "net_cash")):
             out = {**ttm, "net_income": fy["net_income"], "quality_basis": "TTM",
