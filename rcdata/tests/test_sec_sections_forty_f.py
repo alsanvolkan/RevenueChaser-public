@@ -1805,23 +1805,17 @@ def test_the_round_2_patterns_do_not_crawl(text):
 def test_ag_a_description_that_is_a_sliver_ahead_of_item_4_is_short():
     """AG prints a 4,838-character description and then item 4, under which its principal markets and material
     properties go on for 300,000 characters before RISK FACTORS. Item 4 is the end the rule finds, and the label
-    says the section is suspect.
+    says the section is suspect. EMA's description is half the way to RISK FACTORS and MOON's 4.9%, both right
+    as cut; and the same proportions closed by RISK FACTORS are an ordinary short section. Those stay ``ok``,
+    in this test rather than one of their own, because on the merge-base they pass already.
     """
     text = (AIF + "DESCRIPTION OF BUSINESS\n" + BODY[:5_000] + "\nGENERAL DEVELOPMENT OF THE BUSINESS\n"
             + BODY * 8 + "\nRISK FACTORS\n" + "Risky. " * 400)
     assert _cut2(text) == (BODY[:5_000].strip(), "short")
-
-
-@pytest.mark.parametrize("after", [1, 4])
-def test_ema_and_moon_a_description_ahead_of_a_history_only_item_4_stays_ok(after):
-    """EMA's description is half the way to RISK FACTORS and MOON's 4.9%; both are right as cut."""
-    text = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\nGENERAL DEVELOPMENT OF THE BUSINESS\n"
-            + BODY * after + "\nRISK FACTORS\n" + "Risky. " * 400)
-    assert _cut2(text) == (BODY.strip(), "ok")
-
-
-def test_a_sliver_label_needs_item_4_as_the_end():
-    """The same proportions closed by RISK FACTORS are an ordinary short section and keep ``ok``."""
+    for after in (1, 4):
+        text = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\nGENERAL DEVELOPMENT OF THE BUSINESS\n"
+                + BODY * after + "\nRISK FACTORS\n" + "Risky. " * 400)
+        assert _cut2(text) == (BODY.strip(), "ok"), after
     text = (AIF + "DESCRIPTION OF BUSINESS\n" + BODY[:5_000] + "\nRISK FACTORS\n" + BODY * 8
             + "\nDIVIDENDS\n" + "Paid. " * 400)
-    assert _cut2(text) == (BODY[:5_000].strip(), "ok")
+    assert _cut2(text) == (BODY[:5_000].strip(), "ok"), "the label needs item 4 as the end"
