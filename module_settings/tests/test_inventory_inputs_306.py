@@ -1,8 +1,9 @@
-"""Data Health row "Your inputs": the two watch lists and the board-settings rows, and the last change (#306, D36).
+"""Data Health row "Your inputs": the board-settings rows and their last change (#306, D36).
 
-Since PR 4 the watch lists live in ops.sqlite (``rcdata.ops``): the row counts both lists and dates their newest
-add or remove from their history, read without creating the file. The old raw ``watchlist`` table is unwritten and
-no longer counted. Board settings are unchanged: ``board_settings`` and ``board_settings_changes`` in raw.duckdb.
+The row counted the two job watch lists as well until avo, 13 Nov 2026 ("Watchlist panosuna bunları ekle ... ve
+buradan yine de kaldır onları"): they are named lists on the Watch lists board, each named for what reads it, so
+Settings keeps no second copy. Board settings are unchanged: ``board_settings`` and ``board_settings_changes`` in
+raw.duckdb. The row still never opens ops.sqlite.
 """
 from __future__ import annotations
 
@@ -14,41 +15,36 @@ from RevenueChaser.module_settings import inventory
 from RevenueChaser.module_settings.tests.test_inventory import FIXED, _rows, _seed
 from RevenueChaser.rcdata import ops
 
+WATCH_WORDS = "the watch lists are on the Watch lists board"
+
 
 def _day(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
-def _last_watch_change() -> float:
-    return max((r["at"] for k in ops.WATCH_KINDS for r in ops.rows(f"watchlist_{k}_changes")), default=0)
-
-
 def test_inputs_row_on_an_empty_store_and_no_ops_file(rawstore_tmp_db):
     _seed()
     row = _rows(inventory.collect(now=FIXED))["inputs"]
-    assert row["label"] == "Your inputs (watchlist, board settings)"
+    assert row["label"] == "Your inputs (board settings)"
     assert row["tables"] == ["board_settings"]
     assert row["rows"] == 0 and row["last_date"] == "—" and row["fetch"] is None
-    assert row["note"] == ("no inputs yet (press a watch-list icon next to a ticker on any board, or save a board "
-                           "setting)")
-    assert not ops.ops_path().exists()                  # the row reads ops.sqlite, it never creates it
+    assert row["note"] == f"no inputs yet (save a board setting; {WATCH_WORDS})"
+    assert not ops.ops_path().exists()                  # the row never creates ops.sqlite, and no longer reads it
 
 
-def test_inputs_row_counts_both_watch_lists_and_dates_the_last_change(rawstore_tmp_db):
+def test_a_watched_name_is_not_counted_here_any_more(rawstore_tmp_db):
+    """avo, 13 Nov 2026: the lists live on their own board; this row is the board settings and their date."""
     _seed()
     ops.watch_add("stock", "AAA", by="leaps")
     ops.watch_add("option", "NVDA", by="sec_13f")
-    ops.watch_add("stock", "BBB", by="leaps")
-    ops.watch_remove("stock", "BBB", by="settings")    # off again: not counted, but the newest change
     bs.save("module_comovement", {"WINSOR_K": 6.5, "MIN_OBS": 100})
     bs.reset("module_comovement", ["MIN_OBS"])
     settings_last = rawstore.query("SELECT max(run_at) AS m FROM board_settings_changes")[0]["m"]
-    last = max(settings_last, _last_watch_change())
     row = _rows(inventory.collect(now=FIXED))["inputs"]
-    assert row["rows"] == 3
-    assert row["last_date"] == _day(last)
-    assert row["note"] == (f"watch lists: 1 option, 1 stock (ops.sqlite); 1 setting override; "
-                           f"last change {_day(last)}")
+    assert row["rows"] == 1                             # the one setting override, neither watched name
+    assert row["last_date"] == _day(settings_last)      # a watch-list add is not this row's newest change
+    assert row["note"] == f"1 setting override; last change {_day(settings_last)} · {WATCH_WORDS}"
+    assert "AAA" not in row["note"] and "NVDA" not in row["note"]
 
 
 def test_the_old_store_watchlist_table_is_not_counted(rawstore_tmp_db):
@@ -68,8 +64,7 @@ def test_the_last_change_counts_a_removal(rawstore_tmp_db):
     last = rawstore.query("SELECT max(run_at) AS m FROM board_settings_changes")[0]["m"]
     row = _rows(inventory.collect(now=FIXED))["inputs"]
     assert row["rows"] == 0 and row["last_date"] == _day(last)
-    assert row["note"] == (f"watch lists: 0 option, 0 stock (ops.sqlite); 0 setting overrides; "
-                           f"last change {_day(last)}")
+    assert row["note"] == f"0 setting overrides; last change {_day(last)} · {WATCH_WORDS}"
 
 
 def test_inputs_queries_are_pinned():
