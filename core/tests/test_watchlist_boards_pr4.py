@@ -52,7 +52,9 @@ WITHOUT_PAIR = {
     "module_watchlists": "the board is avo's own named lists; a row here is already on a list",
 }
 
-_SERVER_BUTTON = re.compile(r'data-rc-watch-menu="" data-ticker="([^"]*)"')
+# ``[^"']``: the client template in the mounted script spells the same attributes around ``' + rcEsc(t) + '``; a
+# rendered button's ticker never holds a bare quote (the escaper turns one into ``&#39;``).
+_SERVER_BUTTON = re.compile(r'data-rc-watch-menu="" data-ticker="([^"\']*)"')
 
 
 def test_every_board_is_classified():
