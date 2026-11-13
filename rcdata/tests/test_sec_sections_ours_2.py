@@ -28,7 +28,7 @@ import pytest
 from RevenueChaser.module_value_chain import splitter
 from RevenueChaser.rcdata import sec_sections
 
-from .sec_sections_cases import BODY, CASES
+from .sec_sections_cases import BODY, CASES, TOC
 
 OURS_1, OURS_2 = sec_sections.OURS_1, sec_sections.OURS_2
 _BY_NAME = {name: (text, form) for name, text, form in CASES}
@@ -1310,3 +1310,121 @@ def test_a_bank_s_qualified_by_mention_does_not_end_item_1():
             + " ITEM 1A. RISK FACTORS " + "Risky. " * 400)
     item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
     assert quality == "ok" and item.endswith(BODY[:3000].strip())
+
+
+# ── #763: the eleven filings that stayed uncut on the 13 Nov 2026 full-disk check ──────────────────────────────
+# Six 10-Ks whose heading ``ours-2`` could not read, and five annual reports that carry a Form 10-K/20-F
+# cross-reference index instead of item sections. Each input below is the shape of the named filing's own
+# heading, read off the stored document on 13 Nov 2026; the filings themselves are not in this tree.
+
+def test_aig_a_pipe_between_the_number_and_the_title_is_a_heading():
+    """AIG prints "ITEM 1 | Business" as the heading and again as every page's running header. Neither rule read
+    it, and ``ours-1`` cut 58,722 characters out of a pair of cross-references instead -- labelled ``ok``."""
+    text = (TOC + "\nPart I\nITEM 1 | Business\n" + BODY[:5000]
+            + "\n10\nAIG | 2025 Form 10-K\nTABLE OF CONTENTS\nITEM 1 | Business\n" + BODY[:5000]
+            + "\nITEM 1A | Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("We make widgets") and "Risky." not in item
+    assert sec_sections.cut_item(text, "10-K", version=OURS_1)[1] != "ok"
+
+
+def test_eos_a_full_stop_before_the_number_is_a_heading():
+    """Eos Energy writes "ITEM. 1 BUSINESS" -- the stop belongs to the word, not to the number."""
+    text = (TOC + "\nPART I\nITEM. 1 BUSINESS\nGeneral\n" + BODY[:5000]
+            + "\nITEM 1A. RISK FACTORS\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("General") and "Risky." not in item
+
+
+def test_fb_financial_a_dash_between_the_word_and_the_number_is_a_heading():
+    """FB Financial writes "ITEM - 1. Business"; its stop is "ITEM 1A - Risk Factors"."""
+    text = (TOC + "\nPART I\nITEM - 1. Business\n" + BODY[:5000]
+            + "\nITEM 1A - Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("We make widgets") and "Risky." not in item
+
+
+def test_brt_an_ell_written_for_the_one_is_still_item_1():
+    """BRT Apartments writes "Item l. Business." with the letter ell. ``ours-1`` found no heading and ran
+    172,334 characters, ``overrun``."""
+    text = (TOC + "\nPART I\nItem l. Business.\nGeneral\n" + BODY[:5000]
+            + "\nItem 1A. Risk Factors.\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    # The filer's own full stop after "Business." is the first character of the body.
+    assert quality == "ok" and item.lstrip(". \n").startswith("General") and "Risky." not in item
+
+
+def test_southern_missouri_zero_width_spaces_inside_a_heading_do_not_hide_it():
+    """Two defects in one filing. ``strip_html`` leaves ``&#8203;`` where it found it, so the heading reads
+    "Item 1. ​ ​ Description of Business"; and its first sentence names Item 1A ("...are qualified by
+    Item 1A. Risk Factors"), which the contents test read as a contents entry and threw the heading away. With
+    it gone the cut fell through to the pattern path and ran 199,999 characters."""
+    text = (TOC + "\nPART I\nItem 1. ​ ​ Description of Business\n"
+            "The disclosures set forth in this Item 1. are qualified by Item 1A. Risk Factors and the section"
+            " captioned “Forward-Looking Statements”. " + BODY[:5000]
+            + "\nItem 1A. Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("The disclosures") and "Risky." not in item
+    assert sec_sections.cut_item(text, "10-K", version=OURS_1)[1] != "ok"
+
+
+def test_exelon_item_1_under_part_i_is_its_heading_whatever_title_follows():
+    """Exelon's contents page says "ITEM 1. BUSINESS" and the heading over the body says "ITEM 1. \\n General".
+    Item 1 is the first item of Part I, so the line after a "PART I" line is its heading; the contents page's own
+    "PART I / ITEM 1." is still thrown out, because the next item is listed right under it."""
+    text = ("Table of Contents\nPART I\nITEM 1.\nBUSINESS\n7\nGeneral\n7\nITEM 1A.\nRISK FACTORS\n20\n"
+            "\nTable of Contents\nPART I\nITEM 1.\nGeneral\nCorporate Structure\n" + BODY[:5000]
+            + "\nITEM 1A. RISK FACTORS\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("General\nCorporate Structure") and "Risky." not in item
+
+
+def test_mcdonalds_an_annual_report_with_a_form_index_is_crossref_and_not_short():
+    """McDonald's, HSBC, Barclays, Pearson and Santander file the annual report itself and map the form's items
+    to it in a table. McDonald's index gives a page number and no caption at all; the other four map Item 4.B to
+    scattered ranges and notes. There is nothing to cut, and ``crossref`` says so where ``short`` and ``missing``
+    read as a cut that went wrong."""
+    index = ("Form 10-K Cross-Reference Index\nPage reference\nPart I\nItem 1 Business Page 3\n"
+             "Item 1A Risk Factors Page 27\nItem 2 Properties Page 36\n")
+    report = "About McDonald's\n" + BODY[:5000] + "\n" + index
+    assert sec_sections.cut_item(report, "10-K", version=OURS_2)[1] == "crossref"
+    assert sec_sections.cut_item(report, "10-K", version=OURS_1)[1] in ("short", "missing")
+    # Without the index the same unreadable filing keeps the label its cut earns: here there is no start at
+    # all, so ``missing``. The table is what makes it ``crossref``, not the length.
+    assert sec_sections.cut_item("About McDonald's\n" + BODY[:5000], "10-K", version=OURS_2)[1] == "missing"
+
+
+def test_hsbc_an_index_headed_item_number_and_caption_is_one_too():
+    """HSBC's table is headed "Form 20-F Item Number and Caption / Location / Page" and never says
+    "cross-reference"; without it the 20-F answers ``missing``, which reads as a cut to try again."""
+    text = ("HSBC Holdings plc Annual Report on Form 20-F\n" + BODY[:5000]
+            + "\nForm 20-F Item Number and Caption\nLocation\nPage\n"
+              "4. Information on the Company\nStrategic report\n14-24\n")
+    assert sec_sections.cut_item(text, "20-F", version=OURS_2)[1] == "crossref"
+
+
+def test_a_contents_page_spelled_the_way_the_heading_is_is_still_a_contents_page():
+    """The start pattern learned "ITEM - 1." and the contents test has to learn it too, or the contents entry
+    becomes the body: `overrun`, cut from the index (Fable review of this change)."""
+    text = ("ITEM - 1. Business 3\nITEM - 1A. Risk Factors 12\nITEM - 1B. Unresolved Staff Comments 35\n"
+            "\nPART I\nITEM - 1. Business\n" + BODY[:5000] + "\nITEM - 1A. Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("We make widgets") and "Risky." not in item
+
+
+def test_a_sentence_that_names_the_form_is_not_a_cross_reference_index():
+    """A bank's Guide 3 index -- "This cross-reference index to Guide 3 disclosures in this Annual Report on
+    Form 10-K" -- is a sentence, not the table. Read unanchored it turned a wrongly-short cut into ``crossref``,
+    which tells the next run there is nothing to find (Fable review of this change).
+
+    The two halves are one test on purpose. The second alone proves nothing: the merge-base has no
+    ``crossref`` label at all, so "this is not crossref" is true there for the wrong reason. The first half is
+    what makes the pair red on the base, and the second is what pins the anchoring.
+    """
+    index = "Form 10-K Cross-Reference Index\nPart I\nItem 1 Business Page 3\n"
+    sentence = ("Our business. This cross-reference index to Guide 3 disclosures in this Annual Report on"
+                " Form 10-K is provided for convenience. ")
+    assert sec_sections.cut_item("About us.\n" + BODY[:5000] + "\n" + index, "10-K",
+                                 version=OURS_2)[1] == "crossref"
+    assert sec_sections.cut_item("About us. " + sentence + BODY[:5000], "10-K",
+                                 version=OURS_2)[1] == "missing"
