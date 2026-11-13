@@ -152,7 +152,9 @@ BREAKS = [("ticker", "TEXT"), ("period", "DATE"), ("cik", "TEXT"), ("filer_name"
 TYPES = [("tag", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("rank", "INTEGER"), ("value", "DOUBLE"),
          ("holders", "INTEGER"), ("share", "DOUBLE"), ("type_value", "DOUBLE"), ("type_filers", "INTEGER"),
          ("snapshot_date", "DATE")]
-TYPE_TOP = 10                            # names per investor type and quarter; the rest is one row (#760)
+TYPE_TOP = 25                            # names per investor type and quarter; the rest is one row (#760). The
+                                         # board draws six: 25 keeps a name it draws from reading 0 in a quarter
+                                         # where it ranked 11th
 ALL_TYPE = "all"                         # every filer, whatever UW tags it
 STARTED, STOPPED = "started", "stopped"
 SCHEMAS = {"sec13f_cusip_map": MAP, "sec13f_filer_period": FILER, "sec13f_ticker_period": TICKER,
@@ -822,7 +824,7 @@ class OwnershipServe:
         snap = f"DATE '{snapshot}'" if snapshot is not None else "CAST(NULL AS DATE)"
         common.create_table(con, "sec13f_type_holdings", TYPES)
         _by_period(con, _periods_of(con, "_held"), "sec13f_type_holdings", f"""
-            WITH pos AS (SELECT m.ticker, h.period, h.cik, sum(h.value) AS value
+            WITH pos AS MATERIALIZED (SELECT m.ticker, h.period, h.cik, sum(h.value) AS value
                          FROM _held h JOIN sec13f_cusip_map m ON m.cusip = h.cusip AND m.period = h.period
                          WHERE h.period = ? AND m.ticker IS NOT NULL GROUP BY ALL HAVING sum(h.value) > 0),
                  tg AS (SELECT cik, tag FROM _tag UNION ALL SELECT DISTINCT cik, '{ALL_TYPE}' FROM pos),
@@ -838,8 +840,7 @@ class OwnershipServe:
                        GROUP BY tag)
             SELECT o.tag, o.period, o.ticker, o.rn, o.value, o.holders, round(o.value / t.type_value * 100, 4),
                    t.type_value, t.type_filers, {snap}
-            FROM o JOIN t ON t.tag = o.tag
-            ORDER BY o.tag, o.rn NULLS LAST""")
+            FROM o JOIN t ON t.tag = o.tag""")
         return common.count(con, "sec13f_type_holdings")
 
     @staticmethod
