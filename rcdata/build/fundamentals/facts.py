@@ -334,7 +334,7 @@ def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | 
         # debt only in the first, and reading the second would quietly drop the 20 due within the year.
         whole = _best_of(lines, FALLBACK_WHOLE_DEBT)
         if whole is None:
-            long_term = _best_of(lines, FALLBACK_LONG_TERM_DEBT)
+            long_term = _best_of(lines, FALLBACK_LONG_TERM_DEBT) or _zero_long_term(lines, current)
     if long_term is not None:
         return [long_term] + current
     if not whole:
