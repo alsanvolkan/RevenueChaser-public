@@ -114,7 +114,7 @@ PROVIDER_FILES = {
     "module_spx_gamma": {"run.py"},
     "module_swing_potential": {"indicators.py", "pipeline.py"},
     "module_uw_interaction": {"engine.py"},
-    "module_value_chain": {"edgar_text.py", "engine.py", "sync.py"},
+    "module_value_chain": {"edgar_text.py", "engine.py", "health.py", "sync.py"},
 }
 
 #: A table an SQL text reads or writes, with an optional ``raw.`` / ``main.`` schema in front.

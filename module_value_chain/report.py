@@ -180,7 +180,8 @@ def render_value_chain_dashboard(payload: dict) -> str:
     payload = payload or {}
     filings = payload.get("filings") or []
     edges = payload.get("edges") or []
-    sync = _friendly(payload.get("as_of"))
+    # An empty store has no sync date; printing today read as "synced today" (#392).
+    sync = _friendly(payload.get("as_of")) or "no sync yet"
     informed = set()
     for e in edges:
         if e.get("relation") in ("supplier", "customer"):
@@ -264,6 +265,9 @@ function options(){
   FOCAL = (DEFAULT_FOCAL && GRAPHS[DEFAULT_FOCAL]) ? DEFAULT_FOCAL : ((DATA[0]||{}).ticker || null);
   rebuildOptions();
 }
+// The relationship seen from the focal company, which is what the legend defines (#405). An edge stored
+// before the field falls back to the filing's own relation.
+function focalRelation(l){ return l.focal_relation || l.relation; }
 function sentence(l){
   var s = l.src, d = l.dst;
   if(l.relation === "supplier") return s + "'s filing names " + d + " as a possible supplier";
@@ -288,7 +292,7 @@ function render(){
   if(!FOCAL){
     var none = '<div class="empty">' + (DATA.length
       ? "No companies match the current filters."
-      : "No companies with supplier / customer edges. Run <b>Fetch (EDGAR)</b> if filings are missing.") + "</div>";
+      : "No companies with supplier / customer edges. Fill the corpus from <b>Settings \u2192 Fetch 10-K sync</b>.") + "</div>";
     document.getElementById("sankey").innerHTML = none;
     document.getElementById("edges").innerHTML = none;
     document.getElementById("fmeta").innerHTML = "";
@@ -313,7 +317,7 @@ function drawSankey(focal, links){
   var dst = links.map(function(l){ return idx[l.dst]; });
   var val = links.map(function(){ return 1; });
   var colors = links.map(function(l){
-    return l.relation === "supplier" ? "rgba(79,157,255,.5)" : "rgba(46,204,113,.5)";
+    return focalRelation(l) === "supplier" ? "rgba(79,157,255,.5)" : "rgba(46,204,113,.5)";
   });
   var nodeColors = nodes.map(function(n){
     if(n === focal) return "#00e6a8";
@@ -334,13 +338,15 @@ function drawEdges(links){
   // Within a hop, the edges whose filing states a share come first, largest share first (#387 D7).
   links.sort(function(a,b){
     return (a.hop - b.hop) || (hasShare(b) - hasShare(a)) ||
-      (hasShare(a) && hasShare(b) ? b.share_pct - a.share_pct : 0) || (order[a.relation]-order[b.relation]);
+      (hasShare(a) && hasShare(b) ? b.share_pct - a.share_pct : 0) ||
+      (order[focalRelation(a)]-order[focalRelation(b)]);
   });
   el.innerHTML = links.map(function(l){
     var why = suspicious(l);
     var flag = why ? ' <span class="chip warn">⚠ ' + why + '</span>' : '';
     var share = hasShare(l) ? ' <span class="chip share">' + rcEsc(shareText(l)) + '</span>' : '';
-    return '<div class="edge"><div><span class="rel r-'+rcEsc(l.relation)+'">'+rcEsc(l.relation)+'</span>' +
+    var rel = focalRelation(l);
+    return '<div class="edge"><div><span class="rel r-'+rcEsc(rel)+'">'+rcEsc(rel)+'</span>' +
       '<span class="sentence">'+rcEsc(sentence(l))+'</span>' + share +
       (l.hop === 2 ? ' <span class="chip">2-hop</span>' : '') + flag + '</div>' +
       '<div class="snip">“'+rcEsc(l.snippet)+'”</div>' +
@@ -371,7 +377,7 @@ function init(){
         "Edges are sentences from the company's latest <b>10-K Item 1</b> (or "
         "<b>20-F Item 4</b>) that name another company. The arrow shows the direction: "
         "a <b>supplier</b> sells to the focal company, a <b>customer</b> buys from it. "
-        "A <b>2-hop</b> edge is one step further out (a supplier of your supplier). "
+        "A <b>2-hop</b> edge is one step further out: a supplier or a customer of a first-hop company. "
         "A <b>percentage</b> on an edge is the share of the filer's sales (a customer) or purchases (a supplier) "
         "that the filing itself states; those edges are listed first, largest share first. "
         "Only a fixed list of about 50 large public companies is recognised by name; "

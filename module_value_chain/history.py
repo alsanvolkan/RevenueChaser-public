@@ -62,7 +62,7 @@ def _problems(edges: list[dict], kept: bool, filings: int | None, counts: dict) 
 
 
 def record(edges: list[dict], *, run_id: str, run_at: float, kept: bool = False, counts: dict | None = None,
-           filings: int | None = None, payload: dict | None = None):
+           filings: int | None = None, payload: dict | None = None, provider_health: dict | None = None):
     """Record a ``chain_mentions`` write: a header for every run, with the edges the table holds after it; a degraded
     run is partial. ``counts`` is the Fetch's ``fetch_corpus`` result or the sync's counts. Returns rows written."""
     counts = dict(counts or {})
@@ -71,7 +71,8 @@ def record(edges: list[dict], *, run_id: str, run_at: float, kept: bool = False,
         params=effective_config(),
         context={"trigger": "fetch" if payload is not None else "sync", "filings": filings, "edges": len(edges),
                  "kept": kept, "counts": counts},
-        payload=_without_catalog(payload), partial="; ".join(_problems(edges, kept, filings, counts)) or None)
+        payload=_without_catalog(payload), partial="; ".join(_problems(edges, kept, filings, counts)) or None,
+        provider_health=provider_health)
 
 
 def _without_catalog(payload: dict | None) -> dict | None:

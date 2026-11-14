@@ -35,6 +35,7 @@ from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 from . import edgar_text
+from . import health
 from . import engine as vc_engine
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ def sync_filings(tickers: list[str] | None = None, limit: int | None = None,
 
         rid = run_id or ledger.new_run_id()
         run_at = time.time()
+        health.EDGAR.reset()        # this sync's SEC calls only (#299)
         misses = vc_engine.stored_misses()
         todo = [(t, c) for t, c in items
                 if force or not vc_engine.miss_is_current(misses.get(t), c)]
@@ -257,5 +259,6 @@ def sync_filings(tickers: list[str] | None = None, limit: int | None = None,
     job_control.checkpoint("EDGAR edges")
     info: dict = {}
     edges = vc_engine.build_edges(info)
-    vc_engine.record_history(edges, info, run_id=rid, run_at=run_at, counts=counts)
+    vc_engine.record_history(edges, info, run_id=rid, run_at=run_at, counts=counts,
+                             provider_health=health.EDGAR.health())
     return {"requested": requested, **counts, "edges": len(edges), "run_id": rid, "submissions": subs}

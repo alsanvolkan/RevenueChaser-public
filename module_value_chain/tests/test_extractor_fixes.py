@@ -150,15 +150,17 @@ def test_concentration_wins_over_keyword_edge(rawstore_tmp_db):
                       "accounted for 29.8% of our net sales.")}])
     edges = engine.build_edges()
     aapl = [e for e in edges if e["dst_ticker"] == "AAPL"]
-    # The "compete with suppliers" sentence is a competitor mention (#394), kept beside the
-    # stated edge; the share sentence has no relation verb of its own, so its keyword
-    # mention is a display-only "other" (#61).
+    # The "compete with suppliers" sentence is a competitor mention (#394), kept beside the stated edge. The
+    # share sentence has no relation verb of its own, so its keyword mention is a display-only "other" (#61) --
+    # and since #729 that row is dropped, because the same filing already states a relation for Apple; it used
+    # to be stored too and drew the company a second time, relation-less, on the board.
     assert [(e["relation"], "29.8%" in e["snippet"]) for e in aapl] == [
-        ("customer", True), ("competitor", True), ("other", True)]
+        ("customer", True), ("competitor", True)]
     # D7 (DF57): the stated share rides on the concentration edge into chain_mentions; a keyword edge has none.
-    assert [e["share_pct"] for e in aapl] == [29.8, None, None]
+    assert [e["share_pct"] for e in aapl] == [29.8, None]
     stored = {(r["dst_ticker"], r["relation"]): r["share_pct"] for r in rawstore.get_all("chain_mentions")}
-    assert stored[("AAPL", "customer")] == 29.8 and stored[("AAPL", "other")] is None
+    assert stored[("AAPL", "customer")] == 29.8
+    assert ("AAPL", "other") not in stored
 
 
 def test_concentration_share_rides_on_each_filing_edge():

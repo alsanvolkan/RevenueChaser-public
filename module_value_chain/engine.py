@@ -20,6 +20,7 @@ from . import aliases
 from . import concentration
 from . import config
 from . import edgar_text
+from . import health as health_mod
 from . import mentions as mentions_mod
 from . import precision as precision_mod
 from . import splitter
@@ -403,7 +404,10 @@ def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] 
     for m in mentions_mod.find_mentions(text, filed):
         if aliases.issuer(m["dst_ticker"]) == me:
             continue
-        if m["dst_ticker"] in stated_dst and m["relation"] in ("supplier", "customer"):
+        # An ``other`` mention is display-only (no relation verb near the name), so it adds nothing once the
+        # filing states any relation for that company, and stored beside the stated row it drew the company
+        # twice on the board (#729). A ``competitor`` mention is a real second relation (#725) and stays.
+        if m["dst_ticker"] and m["dst_ticker"] in stated_dst and m["relation"] in ("supplier", "customer", "other"):
             continue
         out.append({"src": ticker, "dst_name": m["dst_name"], "dst_ticker": m["dst_ticker"],
                     "relation": m["relation"], "snippet": m["snippet"], "filed": m["filed"],
@@ -601,6 +605,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
     """The board's payload. A Fetch records its edges and payload in result history (#387) under ``run_id`` (the
     dashboard job's id, else ``ledger.new_run_id()``); a Refresh writes nothing."""
     run_at = time.time()
+    if not no_fetch:
+        health_mod.EDGAR.reset()      # this run's SEC calls only (#299); a Refresh makes none
     fetch = fetch_corpus(tickers=tickers, no_fetch=no_fetch, limit=limit, force=force)
     if no_fetch:
         # Refresh is pure: it re-renders what the store holds and writes nothing,
@@ -609,7 +615,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         rawstore.ensure_table("chain_mentions")
         edges = rawstore.get_all("chain_mentions")
         filings = _board_filings_rows()
-        return _board_payload(filings, edges, _stored_sync() or _now(), fetch)
+        # No stored sync means nothing was ever synced: the header says so, rather than printing today (#392).
+        return _board_payload(filings, edges, _stored_sync() or "", fetch)
     info: dict = {}
     edges = build_edges(info)
     filings = _board_filings_rows()
@@ -624,18 +631,22 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         {"key": "n_mentions", "value": str(len(edges)), "fetched_at": fetched_at},
     ])
     payload = _board_payload(filings, edges, as_of, fetch)
+    # The banner the board already renders, and the run's recorded health (#299). A Refresh leaves the field
+    # out, so re-rendering never replaces a Fetch's banner with zeros.
+    payload["provider_health"] = health_mod.EDGAR.health()
     record_history(edges, info, run_id=run_id, run_at=run_at, payload=payload, counts=fetch)
     return payload
 
 
 def record_history(edges: list[dict], info: dict, *, run_id: str | None, run_at: float, counts: dict,
-                   payload: dict | None = None) -> None:
+                   payload: dict | None = None, provider_health: dict | None = None) -> None:
     """Result history of a ``chain_mentions`` write (#387): a Value Chain Fetch or an EDGAR sync. A failure is a job
     note, never a failed run: the latest table and the board do not depend on it."""
     from . import history
     try:
         history.record(edges, run_id=run_id or ledger.new_run_id(), run_at=run_at, kept=bool(info.get("kept")),
-                       counts=counts, filings=info.get("filings"), payload=payload)
+                       counts=counts, filings=info.get("filings"), payload=payload,
+                       provider_health=provider_health or (payload or {}).get("provider_health"))
     except Exception as exc:
         logger.exception("Value Chain result history failed")
         ledger.add_note(f"Value Chain result history was not recorded: {type(exc).__name__}: {exc}")
@@ -650,7 +661,7 @@ def load_payload() -> dict:
     """Board payload from the store (zero network)."""
     filings = _board_filings_rows()
     edges = rawstore.get_all("chain_mentions")
-    return _board_payload(filings, edges, _stored_sync() or _now(), None)
+    return _board_payload(filings, edges, _stored_sync() or "", None)      # never today when nothing synced (#392)
 
 
 def _norm(edges: list[dict]) -> dict[str, list[dict]]:
@@ -670,6 +681,10 @@ def edge_index(edges: list[dict]) -> dict[str, dict]:
     return {"by_src": _norm(edges), "by_dst": by_dst}
 
 
+# Seen from the focal company, an incoming edge's relation is the other way round (#405).
+_INVERSE = {"supplier": "customer", "customer": "supplier"}
+
+
 def focal_graph(edges: list[dict], ticker: str, depth: int = 2,
                 max_hop2: int = config.MAX_HOP2, index: dict | None = None) -> dict:
     """Upstream/downstream edges for ``ticker`` plus one more hop on resolved names.
@@ -687,9 +702,15 @@ def focal_graph(edges: list[dict], ticker: str, depth: int = 2,
     def _add(e, hop, incoming=False):
         # ``share_pct``: the share of the filer's (``src``'s) sales or purchases a concentration sentence states
         # (#387 D7); None on a keyword edge and on an edge stored before the column.
+        # ``relation`` stays the filing's own statement, which the page's sentence quotes ("NXPI's filing names
+        # AAPL as a possible customer"). ``focal_relation`` is the same relationship seen from the focal company,
+        # which is what the legend defines and the chip and colour must read (#405): on an incoming edge the
+        # filer's customer is the focal company's supplier.
         links.append({"src": e["src"], "dst": e.get("dst_ticker") or e["dst_name"],
                       "dst_ticker": e.get("dst_ticker") or "",
-                      "relation": e["relation"], "snippet": e.get("snippet") or "",
+                      "relation": e["relation"],
+                      "focal_relation": _INVERSE.get(e["relation"], e["relation"]) if incoming else e["relation"],
+                      "snippet": e.get("snippet") or "",
                       "share_pct": e.get("share_pct"), "hop": hop, "incoming": incoming,
                       # #410: the edge's source; absent on an edge stored before the column.
                       **({"source": e["source"]} if e.get("source") else {})})
