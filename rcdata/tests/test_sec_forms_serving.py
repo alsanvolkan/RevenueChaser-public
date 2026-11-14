@@ -292,3 +292,24 @@ def test_the_aif_business_row_of_a_long_40_f_is_not_flagged_suspect():
     business = rows[forms.BUSINESS]
     assert business[3] == forms.AIF, business[3]
     assert business[2] == "ok", business[2]
+
+
+# ── the cutter version this layer stores with (#845) ─────────────────────────────────────────────────────────────
+
+def test_the_layer_stores_its_sections_at_ours_2(sec):
+    """#845: the pin moved before the first full cut, not after it.
+
+    ``forms._stale`` makes a company stale when its rows hold another ``rules_version``, so a full pass cut at
+    ``ours-1`` would be re-cut whole the moment the pin moved -- 5,131 annual reports, paid twice. The behaviour
+    that proves the version rather than reading the constant back is the cap: ``ours-1`` stops the business
+    section at :data:`sec_sections.MAX_ITEM_CHARS` and labels it ``capped``, ``ours-2`` stores it whole.
+    """
+    assert forms.SECTIONS_VERSION == forms.sec_sections.OURS_2
+    cap = forms.sec_sections.MAX_ITEM_CHARS
+    _stored(sec, documents={"msft-10k.htm": annual(cap + 40_000)})
+    check = _cut()
+    assert check["result"] != "failed", check.get("note")
+    chars, quality = q("SELECT chars, quality FROM filing_section WHERE cik = ? AND section = 'business'", MSFT)[0]
+    assert chars > cap, f"the section is stored whole, not cut at the cap: {chars}"
+    assert forms.sec_sections.base(quality) == "ok" and "capped" not in quality, quality
+    assert q("SELECT DISTINCT rules_version FROM filing_section") == [("ours-2",)]
