@@ -47,8 +47,11 @@ def test_a_whole_document_is_never_cut_or_capped_however_long_it_is(form):
 
     What the ``business`` slice does at the cap is the pinned version's answer, not this layer's, so it is asked
     of :func:`filings.caps_text` rather than written in: see
-    ``test_the_business_slice_follows_the_pinned_version_at_the_cap``.
+    ``test_the_business_slice_follows_the_pinned_version_at_the_cap``. A proxy has no slice at all, so the
+    pin cannot reach it -- which is a claim about this change and is asserted here for every form, because
+    nothing else in this file would notice the layer reading a cap the pinned cut does not have.
     """
+    assert filings.caps_text() is False, "the board pins ours-2 since #847, which caps nowhere"
     html = fx.proxy(CAP + 50_000) if form == "DEF 14A" else fx.ten_k(CAP + 50_000)
     if form == "20-F":
         html = html.replace("Item 1. Business", "Item 4. Information on the Company").replace(

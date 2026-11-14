@@ -80,6 +80,7 @@ def test_ours_1_caps_its_text_and_ours_2_does_not():
     """
     assert sec_sections.rule("ours-1").caps is True
     assert sec_sections.rule("ours-2").caps is False
+    assert sec_sections.rule(splitter.VERSION).caps is False, "the board reads an uncapped cut since #847"
 
 
 def test_the_board_s_cut_no_longer_caps_or_says_capped():
