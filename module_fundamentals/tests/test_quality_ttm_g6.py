@@ -4,7 +4,9 @@ ROIC, gross margin and net debt / EBITDA read one fiscal year (the anchor, revie
 10-Q follows the anchor year, they read the trailing twelve months: each flow is the year plus the newest year to
 date minus the same year to date a year earlier (the Rule of 40's TTM, ``pipeline._ttm_point``), and the balance
 sheet is the newest quarter's. One basis for all three: when the quarters cannot give every figure the year gives,
-Quality stays on the year. The card says which ("TTM to <date>" or "FY to <date>").
+Quality stays on the year. The Quality window says which ("trailing year to <date>" or "fiscal year to
+<date>"); it was the card's Quality cell too until 14 Nov 2026, when avo cut the face to four cells and
+that cell went with the gate button it repeated.
 Default chosen (plan, avo's call): TTM whenever the quarters give it, else the fiscal year.
 """
 from __future__ import annotations
@@ -108,17 +110,19 @@ def _payload(basis, end):
     return build_payload([row], top_n=10)
 
 
-def _grid(payload, tmp_path):
+def _quality_window(payload, tmp_path):
+    """The Quality gate's window, where the basis is named (the card face no longer repeats it)."""
     return run_board_js(render_fundamental_dashboard(payload), """
 render();
-console.log(JSON.stringify({grid: _els['grid'].innerHTML}));
-""", tmp_path)["grid"]
+openGate({getAttribute: function(k){ return k === "data-ticker" ? "AAA" : "quality"; }});
+console.log(JSON.stringify({sub: _els['m-sub'].textContent}));
+""", tmp_path)["sub"]
 
 
-def test_the_card_names_the_quality_basis(tmp_path):
-    assert "TTM to 2026-06-30" in _grid(_payload("TTM", "2026-06-30"), tmp_path)
-    grid = _grid(_payload("FY", "2025-12-31"), tmp_path)
-    assert "FY to 2025-12-31" in grid and "TTM to" not in grid
+def test_the_quality_window_names_the_quality_basis(tmp_path):
+    assert "trailing year to 2026-06-30" in _quality_window(_payload("TTM", "2026-06-30"), tmp_path)
+    sub = _quality_window(_payload("FY", "2025-12-31"), tmp_path)
+    assert "fiscal year to 2025-12-31" in sub and "trailing year to" not in sub
 
 
 def test_the_selection_version_moves_with_the_basis():

@@ -93,7 +93,7 @@ CLIENT_CALL = {
     "module_leaps": "rcWatchButtons(r.t)",
     "module_asymmetric_growth": "rcWatchRow(c.ticker)",
     "module_swing_potential": "rcWatchRow(c.ticker)",
-    "module_fundamentals": "rcWatchRow(c.ticker)",
+    "module_fundamentals": "rcWatchButtons(c.ticker)",   # a corner slot on the card, not a row (#840)
     "module_earnings_radar": "rcWatchButtons(ticker)",          # in the drawer header, not the table
     "module_comovement": "rcWatchRow(r.ticker)",                # the found name's line, not each chip
     "module_value_chain": "rcWatchRow(FOCAL)",                  # the focal company
