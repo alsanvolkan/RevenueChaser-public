@@ -76,7 +76,7 @@ def test_a_weekly_row_installs_its_days_and_a_row_that_does_not_wake_says_so(tmp
     assert "OnCalendar=Sat *-*-* 10:00:00" in _unit(tmp_path, "RC-Index-Lists", "timer")
     assert "OnCalendar=Mon,Tue,Wed,Thu,Fri *-*-* 23:30:00" in _unit(tmp_path, "RC-Screeners-Daily", "timer")
     vc = _unit(tmp_path, "RC-ValueChain-Sync", "timer")
-    assert "OnCalendar=*-*-* 13:00:00" in vc
+    assert "OnCalendar=*-*-* 00:15:00" in vc
     for name in ("RC-Index-Lists", "RC-Screeners-Daily", "RC-ValueChain-Sync"):
         assert "WakeSystem" not in _unit(tmp_path, name, "timer")
 
