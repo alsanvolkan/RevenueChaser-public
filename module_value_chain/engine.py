@@ -20,6 +20,7 @@ from . import aliases
 from . import concentration
 from . import config
 from . import edgar_text
+from . import health as health_mod
 from . import mentions as mentions_mod
 from . import precision as precision_mod
 from . import splitter
@@ -604,6 +605,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
     """The board's payload. A Fetch records its edges and payload in result history (#387) under ``run_id`` (the
     dashboard job's id, else ``ledger.new_run_id()``); a Refresh writes nothing."""
     run_at = time.time()
+    if not no_fetch:
+        health_mod.EDGAR.reset()      # this run's SEC calls only (#299); a Refresh makes none
     fetch = fetch_corpus(tickers=tickers, no_fetch=no_fetch, limit=limit, force=force)
     if no_fetch:
         # Refresh is pure: it re-renders what the store holds and writes nothing,
@@ -628,18 +631,22 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         {"key": "n_mentions", "value": str(len(edges)), "fetched_at": fetched_at},
     ])
     payload = _board_payload(filings, edges, as_of, fetch)
+    # The banner the board already renders, and the run's recorded health (#299). A Refresh leaves the field
+    # out, so re-rendering never replaces a Fetch's banner with zeros.
+    payload["provider_health"] = health_mod.EDGAR.health()
     record_history(edges, info, run_id=run_id, run_at=run_at, payload=payload, counts=fetch)
     return payload
 
 
 def record_history(edges: list[dict], info: dict, *, run_id: str | None, run_at: float, counts: dict,
-                   payload: dict | None = None) -> None:
+                   payload: dict | None = None, provider_health: dict | None = None) -> None:
     """Result history of a ``chain_mentions`` write (#387): a Value Chain Fetch or an EDGAR sync. A failure is a job
     note, never a failed run: the latest table and the board do not depend on it."""
     from . import history
     try:
         history.record(edges, run_id=run_id or ledger.new_run_id(), run_at=run_at, kept=bool(info.get("kept")),
-                       counts=counts, filings=info.get("filings"), payload=payload)
+                       counts=counts, filings=info.get("filings"), payload=payload,
+                       provider_health=provider_health or (payload or {}).get("provider_health"))
     except Exception as exc:
         logger.exception("Value Chain result history failed")
         ledger.add_note(f"Value Chain result history was not recorded: {type(exc).__name__}: {exc}")

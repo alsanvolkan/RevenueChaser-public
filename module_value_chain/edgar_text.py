@@ -13,7 +13,7 @@ import time
 from RevenueChaser.core import edgar_docs, edgar_store, rawstore
 from RevenueChaser.core.providers import sec_edgar
 
-from . import splitter
+from . import health, splitter
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,12 @@ def document_slice(ticker: str, cik, filing: dict, client=None, run_at: float | 
         doc = rawstore.get("edgar_documents", acc) or {}
         return slice_document(ticker, cik, filing, edgar_docs.read_html(cik, acc) or "",
                               fetched_at=doc.get("fetched_at"))
-    html, row = fetch_document(ticker, cik, filing, client)
+    try:
+        html, row = fetch_document(ticker, cik, filing, client)
+    except Exception as exc:          # noqa: BLE001 - counted, then raised on to fetch_filing (#299)
+        health.EDGAR.call(error=str(exc) or type(exc).__name__, endpoint=f"{ticker}.{acc}")
+        raise
+    health.EDGAR.call(endpoint=f"{ticker}.{acc}")       # a download that worked is a call too
     doc = edgar_store.document_row(
         acc, cik, ticker, filing["form"], filing["filed"], html, doc_url=row["primary_doc"], run_at=run_at)
     edgar_store.save_document(doc)
@@ -127,8 +132,10 @@ def fetch_filing(ticker: str, cik, client=None) -> dict:
     try:
         payload = sec_edgar.get_json(submissions_url(cik), client)
     except Exception as exc:  # noqa: BLE001 - per-ticker network failure
+        health.EDGAR.call(error=str(exc) or type(exc).__name__, endpoint=f"{ticker}.submissions")
         logger.warning("value_chain %s: submissions failed: %s", ticker, exc)
         return {"ticker": ticker.upper(), "error": str(exc)}
+    health.EDGAR.call(endpoint=f"{ticker}.submissions")
     filing = pick_filing(payload)
     if not filing:
         return {"ticker": ticker.upper(), "miss": "no_filing"}
