@@ -143,7 +143,7 @@ What that means for history today (details and cites per table in [data_flow.md]
 
 ## 5. Jobs and schedules
 - **Scheduled** (Windows Task Scheduler, core/automations.py:117-188): RC-Store-Backup 04:00, RC-Relatedness-OffPeak
-  12:30, RC-ValueChain-Sync 13:00, RC-Daily-Bars 22:35 (first, best effort on weekdays, the SEC exchange and fund
+  00:45, RC-ValueChain-Sync 00:15, RC-Daily-Bars 22:35 (first, best effort on weekdays, the SEC exchange and fund
   files: `core/sec_files.py`, at most 2 SEC requests a night, never a different exit code, #301 F0; last, best
   effort, the `^GSPC` daily levels: `core/index_levels.py`, at most 1 yfinance request a night, none when current
   or before the attended `--index-fill`, never a different exit code, #293 M-SPX-0),

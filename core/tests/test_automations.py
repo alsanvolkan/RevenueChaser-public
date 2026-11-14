@@ -412,7 +412,7 @@ def test_install_uses_the_registry_settings():
                  "-DontStopIfGoingOnBatteries", "-WakeToRun"):
         assert flag in waking
     assert "-WakeToRun" not in vc and "-AllowStartIfOnBatteries" in vc
-    assert "-At '23:30'" in waking and "-Daily -At '13:00'" in vc
+    assert "-At '23:30'" in waking and "-Daily -At '00:15'" in vc
     assert "-LogonType Interactive" in waking
 
 

@@ -1,6 +1,6 @@
 """SEC submissions (#299, D15): the one writer of ``sec_submissions`` and ``sec_submissions_cik`` (edgar.duckdb).
 
-The daily EDGAR sync (``module_value_chain/sync.py``, job ``edgar_sync``, task RC-ValueChain-Sync 13:00) already
+The daily EDGAR sync (``module_value_chain/sync.py``, job ``edgar_sync``, task RC-ValueChain-Sync 00:15) already
 asks ``data.sec.gov/submissions/CIK##########.json`` once for every universe CIK. It hands each answer to a
 :class:`Capture`, and the sync's own thread stores them here with the run's ``run_id``; storing makes no request.
 A Refresh fetches nothing, so it writes nothing.

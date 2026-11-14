@@ -143,10 +143,14 @@ BUILDER_UNIT = "life-rc-builder"
 # installed from the home-server repository, not from the Settings page (one name, one timer).
 BACKUP_WEEKLY_UNIT = "life-rc-backup-weekly"
 
+# RC-ValueChain-Sync 00:15 and RC-Relatedness-OffPeak 00:45 (avo, 14 Nov 2026, "A": both out of the working day,
+# behind the 23:00-23:50 rows; 12:30 and 13:00 before). 12:30 was the first hour after DeepSeek's morning peak
+# (core/offpeak.py). At 00:45 Amsterdam a weekday DeepSeek run reaches the 01:00 UTC peak after about an hour and
+# stops there, as it does at any peak boundary; EVREN, the default writer (#360), has no off-peak gate.
 REGISTRY: tuple[AutomationEntry, ...] = (
     AutomationEntry(
         name="RC-Relatedness-OffPeak", label="Relatedness (off-peak)",
-        args=("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "10"), time="12:30",
+        args=("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "10"), time="00:45",
         description=("Relatedness profiling with the board's writer (Settings, #360: EVREN by default, no call cap); "
                      "with DeepSeek it is capped at 10 USD (avo, 2 Nov 2026) and defers itself outside off-peak hours."),
         tables_written=("relatedness_profiles", "relatedness_attributes", "relatedness_scores",
@@ -155,7 +159,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         offpeak_gated=True),
     AutomationEntry(
         name="RC-ValueChain-Sync", label="Value Chain filing sync",
-        args=("-m", "RevenueChaser.module_value_chain", "--sync-filings"), time="13:00",
+        args=("-m", "RevenueChaser.module_value_chain", "--sync-filings"), time="00:15",
         description="Detects newer 10-K/20-F filings and refreshes the raw doc and corpus; stores the SEC "
                     "submissions of every universe CIK (#299).",
         tables_written=("chain_filings", "chain_mentions", "chain_meta", "edgar_documents", "sec_submissions",
