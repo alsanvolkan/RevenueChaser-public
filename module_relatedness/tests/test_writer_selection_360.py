@@ -195,7 +195,7 @@ def test_a_model_change_inside_one_provider_keeps_the_profiles_current(world):
 def test_the_scheduled_job_carries_the_10_usd_deepseek_cap():
     from RevenueChaser.core import automations
     e = automations.entry("RC-Relatedness-OffPeak")
-    assert e.args == ("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "10") and e.time == "00:45"
+    assert e.args == ("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "10") and e.time == "12:30"
 
 
 def test_the_same_model_name_under_another_provider_is_another_writer(world):

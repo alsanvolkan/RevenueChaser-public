@@ -232,7 +232,7 @@ def test_apply_keeps_the_document_download_time(rawstore_tmp_db, tmp_path, monke
 
 
 def test_apply_is_locked_out_while_relatedness_runs(rawstore_tmp_db, tmp_path, monkeypatch):
-    """SHOULD (a): the 00:45 Relatedness run and a dashboard Value Chain Fetch hold the relatedness lock."""
+    """SHOULD (a): the 12:30 Relatedness run and a dashboard Value Chain Fetch hold the relatedness lock."""
     docs_dir = _docs(tmp_path, monkeypatch)
     rawstore.write_rows("chain_filings", [_frow("AAA", "10", "acc-a", "short", "tiny old")])
     edgar_docs.write_html("10", "acc-a", _doc((_WAFER * 40).strip()))

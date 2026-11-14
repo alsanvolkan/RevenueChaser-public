@@ -282,7 +282,7 @@ def apply(docs_dir=None, out_dir=None, run_id: str | None = None) -> dict:
     through ``core.rawstore``, hands every fresh row to ``engine.store_slices`` (its keep
     guard still refuses a worse slice), rebuilds ``chain_mentions`` and records the run as
     a sync does. Holds the ``edgar_sync`` lock for the whole write, so it never overlaps a
-    sync or another apply, and the ``relatedness`` lock, which the 00:45 Relatedness run holds;
+    sync or another apply, and the ``relatedness`` lock, which the 12:30 Relatedness run holds;
     if either is held, returns ``{"locked": True}`` and writes nothing. A dashboard Value Chain
     Fetch holds no lock, so the operator checks ``/api/jobs`` before a live run. Refuses (``RuntimeError``) when no row has a stored document under ``docs_dir``,
     before any write. Never touches the network. ``docs_dir`` defaults to ``config.EDGAR_DOCS_DIR``;

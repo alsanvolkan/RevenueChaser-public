@@ -220,7 +220,7 @@ AREAS = [
      "Value Chain · record_misses", "module_value_chain/engine.py:111",
      "edgar", "chain_meta", ":847", "key", "replace per key",
      "A miss is retried after 7 days.", "module_value_chain/config.py:53"),
-    ("SEC submissions per CIK, every equity_universe CIK once per run (edgar_sync, RC-ValueChain-Sync 00:15)", "module_value_chain/sync.py:52, :109",
+    ("SEC submissions per CIK, every equity_universe CIK once per run (edgar_sync, RC-ValueChain-Sync 13:00)", "module_value_chain/sync.py:52, :109",
      "sec_submissions · record (filings.recent; flushed per 250 CIKs on the sync's thread)", "core/sec_submissions.py:133; module_value_chain/sync.py:114, :216-217",
      "edgar", "sec_submissions", ":1791", "cik + accession", "append",
      "Every filing stays; the first write of an accession wins.", "core/sec_submissions.py:1-25"),

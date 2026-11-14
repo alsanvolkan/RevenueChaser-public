@@ -141,8 +141,8 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
         assert phrase not in text, f"docs/data_architecture.md still says {phrase!r}"
     # An hourly row (RC-Build, PR 2) is stated by its minute: "hourly at :05".
     times = {e.name: f"hourly at :{e.time[-2:]}" if e.hourly else e.time for e in automations.REGISTRY}
-    assert times == {"RC-Relatedness-OffPeak": "00:45",
-                     "RC-ValueChain-Sync": "00:15", "RC-Daily-Bars": "23:00",
+    assert times == {"RC-Relatedness-OffPeak": "12:30",
+                     "RC-ValueChain-Sync": "13:00", "RC-Daily-Bars": "23:00",
                      "RC-Screeners-Daily": "23:30", "RC-Forecast-Outcomes": "23:35",
                      "RC-Forecast-Baselines": "23:50",
                      "RC-Index-Lists": "10:00", "RC-Earnings-Calendar": "23:40", "RC-Short-Interest": "23:40",
