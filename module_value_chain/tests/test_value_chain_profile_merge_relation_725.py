@@ -75,4 +75,7 @@ def test_a_display_only_other_edge_still_loses_to_the_profile():
     profile = {"customers": [{"name": "Apple Inc.", "share": None, "quote": "Apple is our largest"}]}
     got = _by_key(engine.merge_profile(regex, engine.profile_edges("AMKR", profile, "2026-02-01")))
     assert set(got) == {("AAPL", "customer")}
-    assert got[("AAPL", "customer")]["share_pct"] == 29.8
+    assert got[("AAPL", "customer")]["source"] == "profile"
+    # No share: this filing states none for Apple (the sentence that did also stated the relation, and #729 now
+    # drops the ``other`` row in that case, so it cannot be the input here).
+    assert got[("AAPL", "customer")]["share_pct"] is None
