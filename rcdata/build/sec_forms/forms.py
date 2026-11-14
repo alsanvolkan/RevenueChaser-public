@@ -127,6 +127,10 @@ def _span(whole: str, part: str) -> tuple[int | None, int | None]:
     shortcut: found by searching for the cut text, so a cut the rule altered -- a capped one -- has no span;
     upgrade when ``ours-2`` returns the offsets of its own cut.
     """
+    # An empty cut sits nowhere, and ``find("")`` answers 0: without this the row of a cut that found no section
+    # (#843) would claim the document's first character.
+    if not part:
+        return (None, None)
     i = whole.find(part)
     return (i, i + len(part)) if i >= 0 else (None, None)
 
@@ -151,7 +155,8 @@ def sections_of(html: str, form: str, *, exhibit: bool = False, by_name: object 
 
     An exhibit is the business description on its own, so its whole text is the section and the 10-K item cuts do
     not apply to it (as ``sec/filings`` reads it today). A proxy is one uncut ``proxy`` row; every other form gives
-    the uncut ``whole`` row plus the business section its own rule finds.
+    the uncut ``whole`` row plus the business row its own rule cuts -- empty text and the cutter's label when the
+    rule found no section (#843), so ``method`` names the cutter that ran and not a cut that was made.
     """
     text = sec_sections.strip_html(html)
     if exhibit:
@@ -170,8 +175,14 @@ def sections_of(html: str, form: str, *, exhibit: bool = False, by_name: object 
             out.append((BUSINESS, aif, _flag("ok", text, aif, form, aif=True), AIF, *_span(text, aif)))
         return out
     item, quality = sec_sections.cut_item(text, form, version=SECTIONS_VERSION)
-    if item:
-        out.append((BUSINESS, item, _flag(quality, text, item, form), HEADER, *_span(text, item)))
+    # An empty cut is a row too, with the cutter's own label -- as ``filing_item`` writes it (#843). ``crossref``
+    # says "the section is in another document, do not look" and ``missing`` "nothing was found here"; with no row
+    # at all a reader cannot tell either from "not cut yet", and ``module_relatedness.locator.asks`` takes the
+    # ``missing`` path and pays for a locator call that cannot find anything (#841). 22 of the 42 ``crossref``
+    # cuts of the 5,131 stored annual reports have an empty body (13 Nov 2026), so they are all of them that
+    # reach a reader. The text is "" and not NULL, because ``chars`` is its length and the readers concatenate.
+    item = item or ""
+    out.append((BUSINESS, item, _flag(quality, text, item, form), HEADER, *_span(text, item)))
     return out
 
 
