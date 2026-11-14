@@ -53,7 +53,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"
 .summary b{color:var(--text);font-weight:600}
 .summary .on{color:var(--green);font-weight:700}
 .summary .off{color:var(--red);font-weight:700}
-.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700}
 .b-sector{background:var(--panel2);color:var(--muted)}
 .b-index{background:var(--accent-soft);color:var(--accent)}
 .b-dist{background:var(--neg-soft);color:var(--red)}
@@ -79,19 +79,21 @@ select,input[type=text],input[type=number]{background:var(--input-bg);border:1px
 input[type=text]{flex:1;min-width:200px}
 .count{color:var(--muted);font-size:12px;margin-left:auto;white-space:nowrap}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:9px}
-.head{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.tick{font-size:14px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tick b{font-size:15px;letter-spacing:-.2px}
+.card{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:7px}
+.watch-corner{position:absolute;top:6px;right:6px}
+.watch-corner .rc-watch{margin:0}
+.head{display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding-right:50px;min-height:22px}
+.tick{font-size:13px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tick b{font-size:14px;letter-spacing:-.2px}
 .tick .sep{color:var(--muted)}
-.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
-.m{background:var(--panel2);border-radius:8px;padding:6px 4px;text-align:center;min-width:0}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.m{background:var(--panel2);border-radius:8px;padding:5px 4px;text-align:center;min-width:0}
 .m .k{font-size:9px;color:var(--muted);letter-spacing:.3px;text-transform:uppercase}
-.m .val{font-weight:700;font-size:12px;overflow-wrap:break-word;line-height:1.15}
+.m .val{font-weight:700;font-size:11.5px;overflow-wrap:break-word;line-height:1.15}
 .gates{display:flex;gap:6px;border-top:1px solid var(--panel2);padding-top:8px}
 .event{color:var(--amber);font-size:11px;line-height:1.35}
 .event .when{color:var(--muted)}
-.prov{color:var(--muted);font-size:11px;line-height:1.35}
+.prov{color:var(--muted);font-size:10.5px;line-height:1.3}
 .m .when{display:block;font-weight:400;font-size:9px;color:var(--muted)}
 .gate{flex:1;background:var(--panel2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 0;cursor:pointer;font-weight:700;font-size:12px}
 .gate.on{color:var(--green);border-color:color-mix(in srgb,var(--pos) 40%,transparent)}
@@ -99,7 +101,7 @@ input[type=text]{flex:1;min-width:200px}
 .gate.unk{color:var(--amber)}
 .tags{display:flex;flex-wrap:wrap;gap:6px;min-height:18px}
 .tags.empty{min-height:18px}
-.tag{font-size:10.5px;padding:2px 8px;border-radius:20px;background:var(--panel2);color:var(--muted)}
+.tag{font-size:10px;padding:2px 7px;border-radius:20px;background:var(--panel2);color:var(--muted)}
 .empty{color:var(--muted);padding:40px;text-align:center}
 footer{color:var(--muted);font-size:11px;margin-top:28px;border-top:1px solid var(--border);padding-top:14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
 .modal{display:none;position:fixed;inset:0;background:var(--scrim);z-index:50;align-items:center;justify-content:center}
@@ -375,13 +377,14 @@ function cardHtml(c){
       + (st.filed ? ' filed ' + rcEsc(st.filed) : '') + (st.filed && st.read ? ',' : '')
       + (st.read ? ' read ' + rcEsc(st.read) : '') + '</div>'
     : "";
+  var watch = rcWatchButtons(c.ticker);
   return '<div class="card">'
+    + (watch ? '<div class="watch-corner">' + watch + '</div>' : '')
     + '<div class="head">'
     + (sector ? '<span class="badge b-sector">'+sector+'</span>' : '')
     + indexBadges + distTag + staleTag + '</div>'
     + '<div class="tick"><b>' + t + '</b>'
     + (name ? '<span class="sep"> • </span>'+name : '') + '</div>'
-    + rcWatchRow(c.ticker)
     + '<div class="metrics">'
     + cell("Period", rcEsc(c.period))
     + cell("Basis", rcEsc(c.ro40_basis))
