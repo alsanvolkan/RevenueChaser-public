@@ -1,7 +1,8 @@
 """Review N1 (28 Oct): a company with more cash than debt passes "Net Debt / EBITDA < 3×" even when its EBITDA is
 zero or negative. Before, the ratio was left unknown whenever EBITDA was not positive, so a net-cash firm with a
 loss year could never clear Quality 3/3; a firm that owes nothing net is not over-levered, whatever it earns.
-A firm with net debt and EBITDA ≤ 0 stays unknown: its leverage really cannot be measured by this ratio."""
+A firm with net debt and EBITDA ≤ 0 **fails** since #737 (avo, 14 Nov 2026, "A: Kaldı say"); that case is
+test_fundamentals_leverage_loss_737.py."""
 from __future__ import annotations
 
 from RevenueChaser.module_fundamentals.pipeline import _quality_metrics
@@ -26,9 +27,11 @@ def test_net_cash_with_a_loss_passes_the_leverage_rule():
     assert rule["passed"] is True and rule["actual"] == "Net cash" and rule["unit"] == "text"
 
 
-def test_net_debt_with_a_loss_stays_unknown():
+def test_net_debt_with_a_loss_fails():
+    """#737: it used to stay unknown. A company with no EBITDA to service its net debt is levered, and the
+    unknown only kept it out of the count."""
     q = _quality_metrics(_year(ebit=-80.0, debt=300.0, cash=100.0))
-    assert q["net_cash"] is False and _rule(q)["passed"] is None
+    assert q["net_cash"] is False and _rule(q)["passed"] is False
 
 
 def test_a_positive_ebitda_keeps_the_ratio():
