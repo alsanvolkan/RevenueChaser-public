@@ -121,9 +121,12 @@ class UWEconomicCalendar:
         try:
             base.rows_table(con, "snap", SCHEMA, rows)
             # The day's newest fetch replaces it whole: an event UW dropped is gone from that day too.
-            # shortcut: the swap's 1% shrink guard (serving.MAX_SHRINK) refuses a fetch that drops events while the
-            # table holds only a day or two; the check fails and the next pass retries. Past a week of days one
-            # dropped event is far under 1%. Upgrade: add the table to serving.SHRINKS_BY_CHOICE in a serving PR.
+            # A day's newest fetch holds fewer rows than its first one whenever an event has rolled out of UW's
+            # forward window, so the swap's 1% shrink guard (serving.MAX_SHRINK) refused the whole ``market``
+            # build every hour on 14 Nov 2026 (114 rows against 126 live). ``economic_event`` is in
+            # serving.SHRINKS_BY_CHOICE since: the source chooses the day's list, and a count that cannot only
+            # grow is not evidence of a partial Parquet tree. An empty table is still refused by the swap, and an
+            # empty answer from UW never reaches here (``fetch`` raises on it).
             return [base.write_parquet(con, "SELECT * FROM snap ORDER BY event_ts, event, type", partition_path(day))]
         finally:
             con.close()

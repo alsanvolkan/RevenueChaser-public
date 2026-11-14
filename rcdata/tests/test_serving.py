@@ -232,6 +232,35 @@ def test_b2_a_shrink_is_allowed_only_when_asked_for():
     _build_t(11)                                   # growing is always fine
 
 
+def test_a_table_that_shrinks_by_choice_may_shrink_without_allow_shrink_but_may_not_empty():
+    """``SHRINKS_BY_CHOICE``: the source or avo chooses the row count, so a smaller one is not a partial build.
+    A request-wide ``allow_shrink`` is not needed for it (it would relax every other table of the kind with it),
+    and the "empties" guard still holds."""
+    for table in serving.SHRINKS_BY_CHOICE:
+        with serving.build("market") as b:
+            b.con.execute(f'CREATE TABLE "{table}" AS SELECT range AS i FROM range(100)')
+            b.swap({table: 100})
+        with serving.build("market") as b:                      # -90 %, far past MAX_SHRINK, no allow_shrink
+            b.con.execute(f'CREATE TABLE "{table}" AS SELECT range AS i FROM range(10)')
+            b.swap({table: 10})
+        with serving.open_read("market") as con:
+            assert con.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0] == 10
+        with pytest.raises(serving.SwapRefused, match="empties"):
+            with serving.build("market") as b:
+                b.con.execute(f'CREATE TABLE "{table}" (i INTEGER)')
+                b.swap({table: 0})
+        serving.live_path("market").unlink()
+
+
+def test_the_economic_calendar_shrinks_by_choice_because_its_window_rolls():
+    """RC-Build on homesrv failed every hour from 00:05 UTC on 14 Nov 2026: ``uw/economic_calendar`` served 114 rows
+    against 126 live (-9.5 %), because a snapshot day's partition is replaced whole by that day's newest fetch and
+    events have rolled out of UW's "this week and next" window since. One refused swap fails the whole ``market``
+    kind (one file, one swap), so the guard cannot be left to a retry."""
+    from RevenueChaser.rcdata.build import uw_economic_calendar as econ
+    assert econ.TABLE in serving.SHRINKS_BY_CHOICE
+
+
 def test_a_retired_table_may_leave_the_build_and_any_other_still_may_not(monkeypatch):
     """Review M2 of #382: PR 382 drops ``prices``' ``crsp_unadjusted`` table on purpose, and the live file still holds
     it. The "every live table must be in the build" guard refused that build even with ``allow_shrink``; a table the

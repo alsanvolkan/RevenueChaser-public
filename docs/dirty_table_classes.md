@@ -44,6 +44,7 @@ Both are why `dirty.full_rebuild_reason` exists and why a dataset may declare on
 | `market_series` | cumulative + restated | `obs_date` range; key `(series_id, source)` | `market_series.py`: Parquet is merged by `(series_id, obs_date, source)`, "the newest fetch winning a key" — a provider that revises a past observation rewrites that row |
 | `spx_gamma_expiry_strike` | cumulative | `session_date` range | `uw_spot_expiry_strike.py`: one raw file per session, the file is the resume marker, a stored session is never re-asked |
 | `spx_greek_expiry_strike` | cumulative | `session_date` range | `uw_greek_expiry_strike.py`, same shape |
+| `economic_event` | snapshot per day, **chosen list** | `snapshot_date` | `uw_economic_calendar.py`: one partition per snapshot day, replaced whole by that day's newest fetch. UW serves a forward window ("this week and next"), so a day's newest fetch holds fewer events than its first one once some have rolled out: the count is the source's choice, and the table is in `serving.SHRINKS_BY_CHOICE` (14 Nov 2026) |
 
 ## spine
 

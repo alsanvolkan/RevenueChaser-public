@@ -1059,7 +1059,10 @@ none may empty or lose more than 1% of its rows unless the request says `"allow_
 (a dataset with no provider, such as `ownership/serve`), never another source dataset's table (`base.shrink_scope`).
 A table that serves only its newest sessions (`option_eod`) names its first kept session in the
 build file's `serving_window` table, and is compared on the rows inside that window: a session leaving it is not a
-loss, a session inside it that lost rows is. A build also refuses
+loss, a session inside it that lost rows is. A table whose row count the source or avo chooses rather than
+accumulates is named in `serving.SHRINKS_BY_CHOICE` (`my_universe`; `economic_event` since 14 Nov 2026, because UW's
+calendar is a forward window and a snapshot day's partition is replaced whole by that day's newest fetch): it may
+shrink by any amount and still may not empty. A build also refuses
 a missing Parquet root (the raw disk not mounted). Then the live file is hard-linked to `<kind>.prev.duckdb` and
 `os.replace` moves the new file over the live name, so the live name is never missing. Any failure deletes the new
 file and leaves the live file byte-identical (test T3, `rcdata/tests/test_serving.py`). The dashboard opens a serving
