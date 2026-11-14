@@ -33,21 +33,27 @@ from .sec_sections_cases import CASES, STRIP_HTML_INPUT
 
 
 # ── the version seam ───────────────────────────────────────────────────────────────────────────────────────────
-def test_the_board_is_pinned_to_ours_1_and_not_to_the_default():
-    """The board names its version in its own code, so a later default change cannot move its text unseen."""
-    assert splitter.VERSION == sec_sections.OURS_1 == "ours-1"
+def test_the_board_is_pinned_to_ours_2_and_not_to_the_default():
+    """The board names its version in its own code, so a later default change cannot move its text unseen.
+
+    ``ours-2`` since #847 (plan v31 step 1b). ``DEFAULT_VERSION`` is still ``ours-1``, so this is also the test
+    that the board is not riding the default: reading the default would give the other version outright.
+    """
+    assert splitter.VERSION == sec_sections.OURS_2 == "ours-2"
     assert splitter.VERSION in sec_sections.VERSIONS
+    assert splitter.VERSION != sec_sections.DEFAULT_VERSION
     source = Path(splitter.__file__).read_text(encoding="utf-8")
-    assert "VERSION = _rule.OURS_1" in source, "the board must pin its version, not inherit DEFAULT_VERSION"
+    assert "VERSION = _rule.OURS_2" in source, "the board must pin its version, not inherit DEFAULT_VERSION"
 
 
 def test_the_board_passes_its_version_and_does_not_ride_the_default():
     """Dropping ``version=VERSION`` from the wrapper must fail here, and nowhere else would notice.
 
-    ``DEFAULT_VERSION`` is ``ours-1`` today, so a wrapper that forgot to name its version would return exactly the
-    same text and every other test in this file would pass. That is the one mistake this PR exists to prevent, so
-    it is tested by making the default a version that answers differently: if the board reads the default, it gets
-    the sentinel's answer; if it reads its pin, it gets ``ours-1``'s.
+    Written while ``DEFAULT_VERSION`` was the board's own version, when a wrapper that forgot to name its version
+    returned exactly the same text and every other test in this file passed. It is kept word for word after #847
+    moved the pin, because the default is what moves: the day ``DEFAULT_VERSION`` is bumped to the board's pin
+    again, this is the only test that still says the board names it. The sentinel is a version that answers
+    differently, so reading the default is visible whatever the default happens to be.
     """
     sentinel = sec_sections.Rule(version="sentinel", slice_item=lambda text, form="10-K": ("SENTINEL", "ok"),
                                  aif_business=lambda text: "SENTINEL", caps=False)
@@ -59,13 +65,42 @@ def test_the_board_passes_its_version_and_does_not_ride_the_default():
         item, quality = splitter.slice_item(text, "10-K")
         assert (item, quality) != ("SENTINEL", "ok"), "the board must name its version, not take the default"
         assert quality == "ok" and item is not None and item.startswith("We make widgets")
+        # And the board's pin, not ``DEFAULT_VERSION``'s rule either, which the sentinel alone cannot show.
+        assert (item, quality) == sec_sections.cut_item(text, "10-K", version=splitter.VERSION)
         assert splitter.aif_business("annual information form\nDESCRIPTION OF THE BUSINESS\n" + "x " * 3000
                                      + "\nRISK FACTORS\n") != "SENTINEL"
 
 
-def test_ours_1_caps_its_text_because_the_boards_still_read_a_capped_slice():
-    """``sec_forms`` stores sections uncut (#757), so the flag that says which versions cap has to be true here."""
+def test_ours_1_caps_its_text_and_ours_2_does_not():
+    """The cap is a property of the version, and a stored row was cut by the version that wrote it.
+
+    ``ours-1`` caps at :data:`MAX_ITEM_CHARS` and may therefore answer ``capped``; ``ours-2`` caps nowhere
+    (``sec_forms`` stores sections uncut, #757). Since #847 the board reads ``ours-2``, so nothing it cuts may
+    come back ``capped`` -- see ``test_the_board_s_cut_no_longer_caps_or_says_capped``.
+    """
     assert sec_sections.rule("ours-1").caps is True
+    assert sec_sections.rule("ours-2").caps is False
+    assert sec_sections.rule(splitter.VERSION).caps is False, "the board reads an uncapped cut since #847"
+
+
+def test_the_board_s_cut_no_longer_caps_or_says_capped():
+    """A body far over the cap comes back whole and ``ok``, not cut at 200,000 and ``capped`` (#847).
+
+    This is the one behaviour change the pin move makes to this board's own output, and ``capped`` is not a
+    cosmetic label: ``module_relatedness.locator.asks()`` sends a ``capped`` filing to a model to be re-cut, so a
+    version that caps nowhere must not keep claiming it.
+    """
+    body = ("Item 1. Business\n" + "We make widgets and sell them to customers worldwide. " * 200
+            + "\nItem 1A. Risk Factors\n" + "risk text\n" * 300)
+    cap = 5_000  # under the body and over MIN_ITEM_CHARS: ``ours-1`` answers ``capped`` at this cap
+    with mock.patch.object(sec_sections, "MAX_ITEM_CHARS", cap):
+        assert sec_sections.cut_item(body, "10-K", version=sec_sections.OURS_1)[1] == "capped"
+        item, quality = splitter.slice_item(body, "10-K")
+        assert quality == "ok" and item is not None and len(item) > cap
+        # The label follows the cut: S8 is ours-1's length-against-the-cap signal, and the same slice would be
+        # ``ok;suspect:S8`` if the board's flagger had stayed ours-1's (the ``flag`` re-export still is).
+        assert "S8" in splitter.flag(quality, body, item, "10-K")
+        assert "S8" not in splitter.cut_flag(quality, body, item, "10-K", version=splitter.VERSION)
 
 
 def test_an_unknown_version_raises_and_names_what_exists():
@@ -131,26 +166,29 @@ def test_the_board_config_re_exports_the_rule_module_s_constants(name):
 
 
 def test_the_cap_the_cut_reads_is_the_rules_own_and_not_the_board_alias():
-    """The cap is part of ``ours-1``, so the cut reads ``sec_sections.MAX_ITEM_CHARS``.
+    """The cap is part of ``ours-1``, so that cut reads ``sec_sections.MAX_ITEM_CHARS``.
 
     ``module_value_chain.config.MAX_ITEM_CHARS`` is that same value re-exported -- read by
     ``rcdata/build/fundamentals/filings.py``, ``module_value_chain/history.py`` and ``module_relatedness`` to record
     or report the limit -- and rebinding the board's alias must not move the cut, because a stored slice was cut at
     the version's cap and nothing in ``filing_item`` says which cap that was. ``test_splitter_capped_260.py`` patches
     the rule's cap for the same reason.
+
+    Asked of ``ours-1`` by name since #847: the board reads ``ours-2``, which caps nowhere, so the board's wrapper
+    can no longer be the thing that shows a cap being read from the wrong module.
     """
     body = ("Item 1. Business\n" + "We make widgets and sell them to customers worldwide. " * 200
             + "\nItem 1A. Risk Factors\n" + "risk text\n" * 300)
     cap = 5_000  # under the body and over MIN_ITEM_CHARS, so the cut is capped rather than short
-    whole, quality = splitter.slice_item(body, "10-K")
+    whole, quality = sec_sections.cut_item(body, "10-K", version=sec_sections.OURS_1)
     assert quality == "ok" and whole is not None and len(whole) > cap
 
     with mock.patch.object(vc_config, "MAX_ITEM_CHARS", cap):
-        item, quality = splitter.slice_item(body, "10-K")
+        item, quality = sec_sections.cut_item(body, "10-K", version=sec_sections.OURS_1)
     assert (item, quality) == (whole, "ok"), "the board's alias must not be the cap the cut reads"
 
     with mock.patch.object(sec_sections, "MAX_ITEM_CHARS", cap):
-        item, quality = splitter.slice_item(body, "10-K")
+        item, quality = sec_sections.cut_item(body, "10-K", version=sec_sections.OURS_1)
     assert quality == "capped" and item is not None and len(item) == cap
 
 

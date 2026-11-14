@@ -147,6 +147,7 @@ WRITTEN_COLUMN: dict[str, str] = {
     'sec13f_filings': 'filed',
     'sec13f_periods': 'period',
     'sec13f_ticker_period': 'period',
+    'sec13f_type_holdings': 'period',
     'sec_ftd': 'settlement_date',
     'security': 'source_as_of',
     'security_history': 'valid_from',

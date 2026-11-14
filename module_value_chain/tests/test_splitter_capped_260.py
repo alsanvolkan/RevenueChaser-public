@@ -9,12 +9,17 @@ versioned cut, and ``module_value_chain.config.MAX_ITEM_CHARS`` is that same val
 that record or report it. So this test patches the rule's cap, which is the one the cut reads. Patching the
 board's alias no longer changes the cut, and that is the point of the version pin: the cap a stored slice was cut
 at is a property of ``ours-1``, not a board setting that can move under already-stored rows.
+
+Since #847 the board pins ``ours-2``, which caps nowhere, so the cut is asked of ``ours-1`` by name here rather
+than through ``splitter.slice_item``. The rows this covers are the stored ones, cut by ``ours-1`` before the
+re-slice, and they keep the label ``capped`` and the rank it has in ``engine._RANK``. The board's own cut is
+``rcdata/tests/test_sec_sections.py::test_the_board_s_cut_no_longer_caps_or_says_capped``.
 """
 from __future__ import annotations
 
 from unittest import mock
 
-from RevenueChaser.module_value_chain import engine, splitter
+from RevenueChaser.module_value_chain import engine
 from RevenueChaser.rcdata import sec_sections
 
 PROSE = "We make widgets for customers across many markets and we sell them through distributors worldwide.\n" * 60
@@ -27,7 +32,7 @@ CAP = 5000
 
 
 def _cut(text):
-    item, quality = splitter.slice_item(text)
+    item, quality = sec_sections.cut_item(text, "10-K", version=sec_sections.OURS_1)
     return item or "", quality
 
 

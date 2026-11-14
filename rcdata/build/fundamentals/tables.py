@@ -111,11 +111,14 @@ TABLE_CHECKS: dict[str, list[str]] = {
     # Every row is annual or quarterly, and a non-preliminary row carries its accession and filed date.
     "fundamental_fact": ["CHECK (period_type IN ('annual', 'quarterly'))",
                          "CHECK (preliminary OR (accn IS NOT NULL AND filed IS NOT NULL))"],
-    # A document's text is never labelled ok at the cap (filings.CAPPED).
-    "filing_item": ["CHECK (kind IN ('item', 'document'))",
-                    "CHECK (quality IS NULL OR quality <> 'ok' OR item NOT IN ("
-                    + ", ".join(f"'{i}'" for i in filings.SLICED_ITEMS)
-                    + f") OR chars < {filings.max_text_chars()})"],
+    # A document's text is never labelled ok at the cap (filings.CAPPED) -- while the pinned cut caps at all.
+    # ``ours-2`` caps nowhere (#847), so a long and correct section is stored whole and ``ok``, and this CHECK
+    # would refuse it at build time. ``filings.rules_state`` carries the flag, so the live table is rebuilt with
+    # the CHECK the pin asks for instead of keeping the old one.
+    "filing_item": ["CHECK (kind IN ('item', 'document'))"]
+                   + (["CHECK (quality IS NULL OR quality <> 'ok' OR item NOT IN ("
+                       + ", ".join(f"'{i}'" for i in filings.SLICED_ITEMS)
+                       + f") OR chars < {filings.max_text_chars()})"] if filings.caps_text() else []),
     "segment_revenue": ["CHECK (axis IN ('business', 'product', 'geographic'))"],
     "customer_share": ["CHECK (share IS NULL OR (share >= 0 AND share <= 1))"],
 }
@@ -585,8 +588,12 @@ class FundamentalsTables:
 
     def rules_state(self) -> str:
         """The document cap the ``filing_item`` CHECK embeds (``filings.max_text_chars``) lives outside this package;
-        a live copy keeps the table and its old CHECK, so a change of the cap builds whole (#446)."""
-        return f"max_text_chars={filings.max_text_chars()}"
+        a live copy keeps the table and its old CHECK, so a change of the cap builds whole (#446).
+
+        Whether there is a cap at all moved outside the package too (``filings.caps_text``, #847), and it changes
+        the CHECK list rather than a number inside it, so it is named here as well.
+        """
+        return f"max_text_chars={filings.max_text_chars()} caps_text={filings.caps_text()}"
 
     def dirty(self, ctx: base.RunContext):
         """No Parquet of its own: what it serves is made from the sources' staging (#446)."""

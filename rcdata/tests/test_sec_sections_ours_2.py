@@ -28,7 +28,7 @@ import pytest
 from RevenueChaser.module_value_chain import splitter
 from RevenueChaser.rcdata import sec_sections
 
-from .sec_sections_cases import BODY, CASES
+from .sec_sections_cases import BODY, CASES, TOC
 
 OURS_1, OURS_2 = sec_sections.OURS_1, sec_sections.OURS_2
 _BY_NAME = {name: (text, form) for name, text, form in CASES}
@@ -229,16 +229,28 @@ def test_a_start_whose_body_is_shorter_than_the_body_minimum_is_passed_over_for_
     assert len(item) > sec_sections._BODY_MIN
 
 
-# ── and the boards are left exactly where they were ────────────────────────────────────────────────────────────
-def test_the_boards_stay_on_ours_1_and_their_text_does_not_move():
+# ── and the boards read one named version, never "whatever the newest rule is" ─────────────────────────────────
+def test_the_boards_read_their_pin_and_nothing_else():
     """The reason ``ours-2`` is a version and not a fix in place. ``module_value_chain/edgar_text.py`` and
     ``rcdata/build/fundamentals/filings.py`` cut live text with the board's wrapper and store what they cut, with
     no version column to tell two rules' rows apart -- and the Relatedness profiles built on that text are a paid
-    model run to rebuild. So this issue must not change a single answer the board gets.
+    model run to rebuild. So a new version must not reach a board by existing; it reaches one by a change of this
+    pin, with its own re-slice.
+
+    #755 and the issues after it therefore changed no answer the board got. #847 is that change of the pin, so
+    what is asserted here is the invariant and not the value: the wrapper returns the pinned version's cut
+    exactly, whatever the pin is. The pin's current value is
+    ``test_sec_sections.py::test_the_board_is_pinned_to_ours_2_and_not_to_the_default``.
     """
-    assert splitter.VERSION == OURS_1
+    assert splitter.VERSION in sec_sections.VERSIONS
+    assert splitter.VERSION == OURS_2, "#847 moved the pin: this file's version is what the boards cut with now"
     for name, text, form in CASES:
-        assert splitter.slice_item(text, form) == sec_sections.cut_item(text, form, version=OURS_1), name
+        assert splitter.slice_item(text, form) == sec_sections.cut_item(
+            text, form, version=splitter.VERSION), name
+    # And the two versions really do answer differently on this file's cases, so the line above is not comparing
+    # one rule with itself: ours-2 exists because it cuts some of these differently.
+    assert any(sec_sections.cut_item(text, form, version=OURS_1)
+               != sec_sections.cut_item(text, form, version=OURS_2) for _, text, form in CASES)
 
 
 def test_ours_2_is_declared_and_reachable_like_any_other_version():
@@ -246,9 +258,10 @@ def test_ours_2_is_declared_and_reachable_like_any_other_version():
     assert sec_sections.DEFAULT_VERSION == OURS_1, "a new version does not become the default by existing"
     assert sec_sections.rule(OURS_2).version == OURS_2
     assert sec_sections.rule(OURS_2).slice_item is sec_sections._slice_item_ours_2
-    # #756 is where the AIF block improves; a version that moved two rules at once would leave nobody able to say
-    # which of them moved a stored section.
-    assert sec_sections.rule(OURS_2).aif_business is sec_sections.rule(OURS_1).aif_business
+    # Until #756 this was ours-1's own function, so that one PR moved one rule; #756 gave ours-2 its own 40-F
+    # business rule, and the two are now separate functions. test_sec_sections_forty_f.py is where it is tested.
+    assert sec_sections.rule(OURS_2).aif_business is sec_sections._aif_business_ours_2
+    assert sec_sections.rule(OURS_2).aif_business is not sec_sections.rule(OURS_1).aif_business
 
 
 def test_ours_2_adds_its_own_patterns_rather_than_editing_the_shared_ones():
@@ -436,6 +449,9 @@ def test_the_only_cases_where_ours_2_differs_from_ours_1_are_the_three_named_def
         "split_word_item_1a",        # VFF's "ITE M 1A": overrun 27,030 -> ok 26,999
         "over_the_cap",              # the cap is gone: capped 200,000 -> ok 239,999
         "suspect_inner_item_header",  # same text, honest label: ok -> overrun
+        # #756, the 40-F rule: a title ours-1 does not know, and the AIF cap removed with the item one.
+        "aif_description_of_business",  # one of the 28: None -> 26,999
+        "aif_over_the_cap",             # 200,000 -> 239,999
     }
 
 
@@ -1306,3 +1322,262 @@ def test_a_bank_s_qualified_by_mention_does_not_end_item_1():
             + " ITEM 1A. RISK FACTORS " + "Risky. " * 400)
     item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
     assert quality == "ok" and item.endswith(BODY[:3000].strip())
+
+
+# ── #763: the eleven filings that stayed uncut on the 13 Nov 2026 full-disk check ──────────────────────────────
+# Six 10-Ks whose heading ``ours-2`` could not read, and five annual reports that carry a Form 10-K/20-F
+# cross-reference index instead of item sections. Each input below is the shape of the named filing's own
+# heading, read off the stored document on 13 Nov 2026; the filings themselves are not in this tree.
+
+def test_aig_a_pipe_between_the_number_and_the_title_is_a_heading():
+    """AIG prints "ITEM 1 | Business" as the heading and again as every page's running header. Neither rule read
+    it, and ``ours-1`` cut 58,722 characters out of a pair of cross-references instead -- labelled ``ok``."""
+    text = (TOC + "\nPart I\nITEM 1 | Business\n" + BODY[:5000]
+            + "\n10\nAIG | 2025 Form 10-K\nTABLE OF CONTENTS\nITEM 1 | Business\n" + BODY[:5000]
+            + "\nITEM 1A | Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("We make widgets") and "Risky." not in item
+    assert sec_sections.cut_item(text, "10-K", version=OURS_1)[1] != "ok"
+
+
+def test_eos_a_full_stop_before_the_number_is_a_heading():
+    """Eos Energy writes "ITEM. 1 BUSINESS" -- the stop belongs to the word, not to the number."""
+    text = (TOC + "\nPART I\nITEM. 1 BUSINESS\nGeneral\n" + BODY[:5000]
+            + "\nITEM 1A. RISK FACTORS\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("General") and "Risky." not in item
+
+
+def test_fb_financial_a_dash_between_the_word_and_the_number_is_a_heading():
+    """FB Financial writes "ITEM - 1. Business"; its stop is "ITEM 1A - Risk Factors"."""
+    text = (TOC + "\nPART I\nITEM - 1. Business\n" + BODY[:5000]
+            + "\nITEM 1A - Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("We make widgets") and "Risky." not in item
+
+
+def test_brt_an_ell_written_for_the_one_is_still_item_1():
+    """BRT Apartments writes "Item l. Business." with the letter ell. ``ours-1`` found no heading and ran
+    172,334 characters, ``overrun``."""
+    text = (TOC + "\nPART I\nItem l. Business.\nGeneral\n" + BODY[:5000]
+            + "\nItem 1A. Risk Factors.\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    # The filer's own full stop after "Business." is the first character of the body.
+    assert quality == "ok" and item.lstrip(". \n").startswith("General") and "Risky." not in item
+
+
+def test_southern_missouri_zero_width_spaces_inside_a_heading_do_not_hide_it():
+    """Two defects in one filing. ``strip_html`` leaves ``&#8203;`` where it found it, so the heading reads
+    "Item 1. ​ ​ Description of Business"; and its first sentence names Item 1A ("...are qualified by
+    Item 1A. Risk Factors"), which the contents test read as a contents entry and threw the heading away. With
+    it gone the cut fell through to the pattern path and ran 199,999 characters."""
+    text = (TOC + "\nPART I\nItem 1. ​ ​ Description of Business\n"
+            "The disclosures set forth in this Item 1. are qualified by Item 1A. Risk Factors and the section"
+            " captioned “Forward-Looking Statements”. " + BODY[:5000]
+            + "\nItem 1A. Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("The disclosures") and "Risky." not in item
+    assert sec_sections.cut_item(text, "10-K", version=OURS_1)[1] != "ok"
+
+
+def test_exelon_item_1_under_part_i_is_its_heading_whatever_title_follows():
+    """Exelon's contents page says "ITEM 1. BUSINESS" and the heading over the body says "ITEM 1. \\n General".
+    Item 1 is the first item of Part I, so the line after a "PART I" line is its heading; the contents page's own
+    "PART I / ITEM 1." is still thrown out, because the next item is listed right under it."""
+    text = ("Table of Contents\nPART I\nITEM 1.\nBUSINESS\n7\nGeneral\n7\nITEM 1A.\nRISK FACTORS\n20\n"
+            "\nTable of Contents\nPART I\nITEM 1.\nGeneral\nCorporate Structure\n" + BODY[:5000]
+            + "\nITEM 1A. RISK FACTORS\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("General\nCorporate Structure") and "Risky." not in item
+
+
+def test_mcdonalds_an_annual_report_with_a_form_index_is_crossref_and_not_short():
+    """McDonald's, HSBC, Barclays, Pearson and Santander file the annual report itself and map the form's items
+    to it in a table. McDonald's index gives a page number and no caption at all; the other four map Item 4.B to
+    scattered ranges and notes. There is nothing to cut, and ``crossref`` says so where ``short`` and ``missing``
+    read as a cut that went wrong."""
+    index = ("Form 10-K Cross-Reference Index\nPage reference\nPart I\nItem 1 Business Page 3\n"
+             "Item 1A Risk Factors Page 27\nItem 2 Properties Page 36\n")
+    report = "About McDonald's\n" + BODY[:5000] + "\n" + index
+    assert sec_sections.cut_item(report, "10-K", version=OURS_2)[1] == "crossref"
+    assert sec_sections.cut_item(report, "10-K", version=OURS_1)[1] in ("short", "missing")
+    # Without the index the same unreadable filing keeps the label its cut earns: here there is no start at
+    # all, so ``missing``. The table is what makes it ``crossref``, not the length.
+    assert sec_sections.cut_item("About McDonald's\n" + BODY[:5000], "10-K", version=OURS_2)[1] == "missing"
+
+
+def test_hsbc_an_index_headed_item_number_and_caption_is_one_too():
+    """HSBC's table is headed "Form 20-F Item Number and Caption / Location / Page" and never says
+    "cross-reference"; without it the 20-F answers ``missing``, which reads as a cut to try again."""
+    text = ("HSBC Holdings plc Annual Report on Form 20-F\n" + BODY[:5000]
+            + "\nForm 20-F Item Number and Caption\nLocation\nPage\n"
+              "4. Information on the Company\nStrategic report\n14-24\n")
+    assert sec_sections.cut_item(text, "20-F", version=OURS_2)[1] == "crossref"
+
+
+def test_a_contents_page_spelled_the_way_the_heading_is_is_still_a_contents_page():
+    """The start pattern learned "ITEM - 1." and the contents test has to learn it too, or the contents entry
+    becomes the body: `overrun`, cut from the index (Fable review of this change)."""
+    text = ("ITEM - 1. Business 3\nITEM - 1A. Risk Factors 12\nITEM - 1B. Unresolved Staff Comments 35\n"
+            "\nPART I\nITEM - 1. Business\n" + BODY[:5000] + "\nITEM - 1A. Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("We make widgets") and "Risky." not in item
+
+
+def test_a_sentence_that_names_the_form_is_not_a_cross_reference_index():
+    """A bank's Guide 3 index -- "This cross-reference index to Guide 3 disclosures in this Annual Report on
+    Form 10-K" -- is a sentence, not the table. Read unanchored it turned a wrongly-short cut into ``crossref``,
+    which tells the next run there is nothing to find (Fable review of this change).
+
+    The two halves are one test on purpose. The second alone proves nothing: the merge-base has no
+    ``crossref`` label at all, so "this is not crossref" is true there for the wrong reason. The first half is
+    what makes the pair red on the base, and the second is what pins the anchoring.
+    """
+    index = "Form 10-K Cross-Reference Index\nPart I\nItem 1 Business Page 3\n"
+    sentence = ("Our business. This cross-reference index to Guide 3 disclosures in this Annual Report on"
+                " Form 10-K is provided for convenience. ")
+    assert sec_sections.cut_item("About us.\n" + BODY[:5000] + "\n" + index, "10-K",
+                                 version=OURS_2)[1] == "crossref"
+    assert sec_sections.cut_item("About us. " + sentence + BODY[:5000], "10-K",
+                                 version=OURS_2)[1] == "missing"
+
+
+# ── the per-version suspect flagger (#835) ──────────────────────────────────────────────────────────────────────
+#
+# ``sec_forms`` now flags its 10-K/20-F business rows (it only flagged the 40-F before), and the flagger is
+# ``ours-1``'s. Two of its seven signals are undefined for ``ours-2`` and were measured raising false alarms on
+# the 4,988 stored 10-K/20-F filings (13 Nov 2026, real documents on disk, read-only): S8 marks every long slice
+# because ``ours-2`` lifts the 200,000 cap, and S6 marks a correct slice whose Item 1 holds a sub-item heading
+# (``ours-2`` answers that in the cut, as ``overrun``, so no ``ok`` slice reaches the flagger holding one). The
+# version carries which signals it defines (:attr:`sec_sections.Rule.signals`), and :func:`sec_sections.cut_flag`
+# reads it, so a stored row's ``rules_version`` names its flagger as well as its cut.
+
+_LONG = "We make widgets and sell them worldwide. " * 6_000          # > MAX_ITEM_CHARS, one clean Item 1
+_LONG_K = "Item 1. Business\n" + _LONG + "\nItem 1A. Risk Factors\nRisky.\n"
+# A correct Item 1 that carries an 8-K-style sub-item heading inside it (PCVX, #755): ``ours-1``'s S6 reads the
+# sub-item as a section end and flags it; ``ours-2`` cuts past it and the slice is a clean ``ok``.
+_SUBITEM_K = ("Item 1. Business\n" + BODY + "\nItem 2.01 Completion of Acquisition of Assets\n" + BODY
+              + "\nItem 1A. Risk Factors\n")
+
+
+def test_ours_2_does_not_raise_s8_on_a_long_slice_but_bare_flag_does():
+    """S8 compares the slice to ``MAX_ITEM_CHARS``. ``ours-2`` caps nothing, so a long slice is normal, not
+    suspect -- 160 of the 173 slices the bare flagger marked on the stored filings were this false alarm."""
+    item, quality = sec_sections.cut_item(_LONG_K, "10-K", version=OURS_2)
+    assert quality == "ok" and len(item) >= sec_sections.MAX_ITEM_CHARS
+    assert sec_sections.cut_flag(quality, _LONG_K, item, version=OURS_2) == "ok"
+    assert "S8" in sec_sections.flag(quality, _LONG_K, item)          # the bare flagger still raises it
+
+
+def test_ours_2_does_not_raise_s6_on_a_slice_holding_a_sub_item_but_bare_flag_does():
+    """S6 reads a sub-item as a heading of another item. ``ours-2`` cuts correctly past it, so its ``ok`` slices
+    never hold one; the signal only ever fired as a false alarm on this version, so it is not defined for it."""
+    item, quality = sec_sections.cut_item(_SUBITEM_K, "10-K", version=OURS_2)
+    assert quality == "ok" and "Item 2.01" in item
+    assert sec_sections.cut_flag(quality, _SUBITEM_K, item, version=OURS_2) == "ok"
+    assert "S6" in sec_sections.flag(quality, _SUBITEM_K, item)       # the bare flagger still raises it
+
+
+def test_ours_2_still_raises_the_signals_it_defines():
+    """The five defined signals (S1-S5) are the point of the flag: a cut that ends on a cross-reference is
+    ``ok;suspect:S4`` under both versions. BAT's 20-F Item 4 ends "...refer to notes 13, 14 and 27 in Part III"
+    (real filing 1303523, 13 Nov 2026), the shape S4 is for."""
+    text = ("Item 1. Business\n" + BODY + "\nAvailable Information\nWe file with the SEC. "
+            "refer to notes 13, 14 and 27 in Part III\nItem 1A. Risk Factors\n")
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert sec_sections.cut_flag(quality, text, item, version=OURS_2) == "ok;suspect:S4"
+
+
+def test_the_signal_sets_are_the_versions_own_and_s6_s8_are_ours_1_only():
+    """The sets are declared, not inferred: ``ours-1`` keeps every signal (so every existing caller of ``flag``
+    is unchanged), and ``ours-2`` drops exactly S6 and S8."""
+    assert sec_sections.rule(OURS_1).item_signals == sec_sections.SIGNALS_OURS_1
+    assert sec_sections.rule(OURS_2).item_signals == sec_sections.SIGNALS_OURS_2
+    assert set(sec_sections.SIGNALS_OURS_1) - set(sec_sections.SIGNALS_OURS_2) == {"S6", "S8"}
+
+
+@pytest.mark.parametrize("name", ["suspect_tail_cross_reference", "suspect_inner_item_header"])
+def test_cut_flag_defaults_to_ours_1_and_equals_bare_flag_there(name):
+    """``cut_flag`` with no version is ``DEFAULT_VERSION`` (``ours-1``), whose signal set is every signal, so it
+    is byte-identical to the bare :func:`flag` every current caller uses.
+
+    The two inputs are the shared cases where ``flag`` answers something other than the label it was handed, so
+    the comparison reaches the signal dict and the filter. An input whose label is not ``ok`` would compare two
+    early returns and pass however ``cut_flag`` were written -- which is what the first version of this test did.
+    """
+    text, form = _BY_NAME[name]
+    item, quality = sec_sections.cut_item(text, form, version=OURS_1)
+    assert quality == "ok", "the case must reach the flagger, not the quality != ok early return"
+    flagged = sec_sections.flag(quality, text, item, form)
+    assert flagged.startswith("ok;suspect:"), flagged
+    assert sec_sections.cut_flag(quality, text, item, form) == flagged
+
+
+# ── the AIF cutter's own signal set (#838) ──────────────────────────────────────────────────────────────────────
+#
+# A version has two cutters and #835 gave it one signal set, so the ``sec_forms`` layer asked a 40-F's Annual
+# Information Form the questions it asks a 10-K's Item 1. S3 (does the slice carry ``competition``, ``human
+# capital``, ``employees`` or ``available information``) and S6 (does it hold a line-start item number other than
+# Item 1) are item-shaped; NI 51-102 Form 51-102F2 asks an AIF for none of them. ``flag`` trips on ``S2 and S3``
+# and S2 -- a small share of a big document -- is what the AIF of a long 40-F is by construction, so a correct
+# AIF read ``ok;suspect:S2,S3``. ``module_relatedness.locator.asks`` fires on any ``;suspect``, so that sent a
+# correct business row to the writer model: a paid call per 40-F on a board running a paid provider.
+#
+# The case below is the shape measured during the #837 review: a 40-F past the 150,000-character S2 threshold
+# whose AIF business block is about 2.5% of it and carries no US heading. It is built, not a stored filing,
+# because the suite is offline; the rate on the real documents is in the PR report.
+
+#: An AIF business block just over :data:`sec_sections._BODY_MIN` (4,000) and over ``MIN_ITEM_CHARS``, so the cut
+#: is a real ``ok`` one and S1 stays quiet. No 10-K heading in it, which is the whole point: an AIF has none.
+_AIF_BODY = "We make widgets and sell them to customers worldwide. " * 80
+#: Filler that is neither an AIF title nor a 10-K heading, one sentence per line and no page numbers, so the
+#: contents-entry check does not read it as a table of contents.
+_40F_FILLER = "The registrant files this annual report with the Commission.\n" * 1_300
+#: The long 40-F: the AIF block sits between the two halves of the filler, so S5 reads ordinary prose in front
+#: of it and S2's "small share of a big document" is true -- which is what an AIF of a long 40-F always is.
+_LONG_40F = (_40F_FILLER + "annual information form\nGENERAL DEVELOPMENT OF THE BUSINESS\n"
+             + _AIF_BODY + "\nRISK FACTORS\nWe face risks.\n" + _40F_FILLER)
+
+
+@pytest.mark.parametrize("version", [OURS_1, OURS_2])
+def test_a_correct_aif_of_a_long_40_f_is_not_suspect(version):
+    """The bug and the fix in one case, for both versions, because ``ours-1`` is what ``sec_forms`` stores with
+    today: asked with the ITEM set the block is ``ok;suspect:S2,S3``, asked with its own cutter's set it is a
+    bare ``ok``. The cut is the same text either way -- only the label moves."""
+    aif = sec_sections.cut_aif_business(_LONG_40F, version=version)
+    assert aif is not None and len(aif) >= sec_sections.MIN_ITEM_CHARS
+    assert len(_LONG_40F) > 150_000 and len(aif) < 0.03 * len(_LONG_40F), "the case must reach S2"
+
+    assert sec_sections.cut_flag("ok", _LONG_40F, aif, "40-F", version=version, aif=True) == "ok"
+    # What the layer asked before #838, and still asks for an item cut: the two item-shaped signals fire.
+    item_set = sec_sections.cut_flag("ok", _LONG_40F, aif, "40-F", version=version)
+    assert item_set == "ok;suspect:S2,S3", item_set
+
+
+@pytest.mark.parametrize("version", [OURS_1, OURS_2])
+def test_the_aif_set_still_raises_the_signals_that_read_the_text(version):
+    """Dropping S3 and S6 is not switching the flag off: a block that ends mid cross-reference is still
+    ``ok;suspect:S4`` on the AIF path, and S2 rides along as context rather than as the reason.
+
+    The truncated block is handed to the flagger rather than cut out of a doctored document: a stop title with
+    "see" in front of it is a cross-reference to BOTH AIF rules, so editing the document moves the cut instead of
+    the ending, and what is under test here is the signal set, not the cutter.
+    """
+    whole = sec_sections.cut_aif_business(_LONG_40F, version=version)
+    assert whole is not None
+    ends_in_a_reference = whole.rstrip() + " For a description of our mineral properties, see"
+    flagged = sec_sections.cut_flag("ok", _LONG_40F, ends_in_a_reference, "40-F", version=version, aif=True)
+    assert flagged.startswith("ok;suspect:") and "S4" in flagged, flagged
+    assert "S3" not in flagged and "S6" not in flagged, flagged
+
+
+def test_the_aif_sets_are_the_versions_own_and_drop_exactly_the_item_shaped_signals():
+    """Declared, like the item sets: each version's AIF set is its item set without S3 and S6, and ``ours-1``
+    keeps S8 because its AIF block caps while ``ours-2``'s does not."""
+    assert sec_sections.rule(OURS_1).aif_signals == sec_sections.AIF_SIGNALS_OURS_1
+    assert sec_sections.rule(OURS_2).aif_signals == sec_sections.AIF_SIGNALS_OURS_2
+    for item_set, aif_set in ((sec_sections.SIGNALS_OURS_1, sec_sections.AIF_SIGNALS_OURS_1),
+                              (sec_sections.SIGNALS_OURS_2, sec_sections.AIF_SIGNALS_OURS_2)):
+        assert set(item_set) - set(aif_set) == {"S3", "S6"} & set(item_set)
+        assert not set(aif_set) - set(item_set), "the AIF set adds no signal of its own"
+    assert "S8" in sec_sections.AIF_SIGNALS_OURS_1 and "S8" not in sec_sections.AIF_SIGNALS_OURS_2

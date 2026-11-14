@@ -238,3 +238,78 @@ def test_the_note_need_answers_by_local_name_across_taxonomies(sec):
     _cut()
     assert serve.ask("sec.note", ciks=[MSFT], local_name="DebtDisclosureTextBlock").rows
     assert not serve.ask("sec.note", ciks=[MSFT], local_name="SegmentReportingDisclosureTextBlock").rows
+
+
+# ── the suspect flag on the business row (#835) ─────────────────────────────────────────────────────────────────
+
+def _k_ending_in_a_cross_reference() -> str:
+    """A 10-K whose Item 1 ends on a bare "See" in front of the Item 1A heading -- the shape the 10-K reading
+    report found labelled ``ok`` while the cut was wrong (``_TAIL_REF``/S4, the shared
+    ``suspect_tail_cross_reference`` case). Built on the note fixture's header, as :func:`annual` is, so the build
+    still reads its one note."""
+    paragraph = "<p>We develop software and cloud services. Our customers include enterprises.</p>"
+    k = ("<html><body><p>Item 1. Business</p><p>Item 1A. Risk Factors</p>"
+         "<p>PART I</p><p>Item 1. Business</p>" + paragraph * 80
+         + "<p>See</p><p>Item 1A. Risk Factors</p><p>Risks.</p></body></html>")
+    return nf.CONTINUED.replace("\n</body></html>", k.split("<body>", 1)[1])
+
+
+def test_the_business_row_carries_the_suspect_flag_when_the_cut_ends_in_a_reference(sec):
+    """#835: ``sec_forms`` wrote the 10-K/20-F business row with the cutter's bare label and no ``;suspect`` flag,
+    so a wrong-but-``ok`` cut reached Relatedness and Value Chain with nothing telling them to look again. The row
+    now carries :data:`forms.SECTIONS_VERSION`'s own flags; a cut that ends on a cross-reference is ``ok;suspect:S4``.
+    """
+    _stored(sec, documents={"msft-10k.htm": _k_ending_in_a_cross_reference()})
+    _cut()
+    quality, = q("SELECT quality FROM filing_section WHERE cik = ? AND section = 'business'", MSFT)[0]
+    assert quality.startswith("ok;suspect:"), quality
+    assert "S4" in quality, quality
+    # The flag rides in the label text; the cut itself is unchanged, so a reader that only wants the cut strips it.
+    assert forms.sec_sections.base(quality) == "ok"
+
+    # The guard that a clean cut stays a bare ``ok`` lives here, not in a test of its own: on the merge-base a
+    # clean cut is bare before and after, so a standalone guard would pass there and ``red-on-base`` would refuse
+    # it (as PR 827 found). A short, well-formed 10-K has no signal to raise (S2 needs a huge filing).
+    clean = [r for r in forms.sections_of(fx.ten_k(), "10-K") if r[0] == forms.BUSINESS][0]
+    assert clean[2] == "ok", clean[2]
+
+
+# ── the AIF business row carries the AIF cutter's flags, not the item cutter's (#838) ───────────────────────────
+
+def test_the_aif_business_row_of_a_long_40_f_is_not_flagged_suspect():
+    """The layer cuts a 40-F's business row with :func:`sec_sections.cut_aif_business` and flagged it from the
+    ITEM signal set, so S3 -- does the slice carry a 10-K's own section headings -- was asked of a Canadian
+    Annual Information Form, which NI 51-102 never asks for one. Together with S2 (an AIF is a small share of a
+    long 40-F) that tripped the flag, and ``module_relatedness.locator.asks`` fires on any ``;suspect``, so a
+    correct business row went to the writer model: a paid call per 40-F where the board runs a paid provider.
+
+    The call site is what says which cutter made the text (``_flag(..., aif=True)``), so this reads the layer
+    rather than :func:`sec_sections.cut_flag`, whose own cases are in ``test_sec_sections_ours_2``.
+    """
+    from .test_sec_sections_ours_2 import _LONG_40F
+
+    rows = {r[0]: r for r in forms.sections_of(_LONG_40F, "40-F")}
+    business = rows[forms.BUSINESS]
+    assert business[3] == forms.AIF, business[3]
+    assert business[2] == "ok", business[2]
+
+
+# ── the cutter version this layer stores with (#845) ─────────────────────────────────────────────────────────────
+
+def test_the_layer_stores_its_sections_at_ours_2(sec):
+    """#845: the pin moved before the first full cut, not after it.
+
+    ``forms._stale`` makes a company stale when its rows hold another ``rules_version``, so a full pass cut at
+    ``ours-1`` would be re-cut whole the moment the pin moved -- 5,131 annual reports, paid twice. The behaviour
+    that proves the version rather than reading the constant back is the cap: ``ours-1`` stops the business
+    section at :data:`sec_sections.MAX_ITEM_CHARS` and labels it ``capped``, ``ours-2`` stores it whole.
+    """
+    assert forms.SECTIONS_VERSION == forms.sec_sections.OURS_2
+    cap = forms.sec_sections.MAX_ITEM_CHARS
+    _stored(sec, documents={"msft-10k.htm": annual(cap + 40_000)})
+    check = _cut()
+    assert check["result"] != "failed", check.get("note")
+    chars, quality = q("SELECT chars, quality FROM filing_section WHERE cik = ? AND section = 'business'", MSFT)[0]
+    assert chars > cap, f"the section is stored whole, not cut at the cap: {chars}"
+    assert forms.sec_sections.base(quality) == "ok" and "capped" not in quality, quality
+    assert q("SELECT DISTINCT rules_version FROM filing_section") == [("ours-2",)]

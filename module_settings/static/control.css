@@ -204,7 +204,7 @@
 .ctl .chip.s.plan{background:none;color:var(--mut);border:1px dashed #8a9a6a}
 .ctl .chip.s.plan .sgly{stroke:#8a9a6a}
 .ctl .chip.s .pl{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;margin-left:2px;opacity:.85}
-@media(max-width:760px){.ctl .fcol .chip{min-height:44px}}
+@media(max-width:900px){.ctl .fcol .chip{min-height:44px}}
 .ctl .journey{margin:10px 0 4px}
 .ctl .journey .colh{color:var(--l-dat)}
 .ctl .rootline{margin:0 0 6px;font-size:11px;color:var(--mut);display:flex;flex-wrap:wrap;gap:4px 10px}
@@ -331,7 +331,7 @@
 .ctl .flowlegend i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
 .ctl .fnote{color:var(--mut);font-size:12.5px;margin:0 0 10px}
 .ctl .phoneonly{display:none}
-@media(max-width:760px){.ctl .flowwrap{display:none}
+@media(max-width:900px){.ctl .flowwrap{display:none}
 .ctl .phoneonly{display:block}}
 /* #715: the phone's own flow — the six pictures side by side in one strip, swiped sideways. */
 .ctl .pftabs{display:flex;gap:6px;overflow-x:auto;padding:0 0 8px;scrollbar-width:none}
@@ -425,7 +425,7 @@
 .ctl details.probs li:first-child{border-top:0}
 .ctl details.probs li code{color:var(--bad);background:var(--badb)}
 .ctl details.probs .pk{color:var(--mut);font-size:11.5px}
-@media(max-width:760px){.ctl details.probs li{grid-template-columns:1fr}
+@media(max-width:900px){.ctl details.probs li{grid-template-columns:1fr}
 .ctl details.probs>summary{min-height:44px}}
 .ctl table.paths col.c1{width:236px}
 .ctl table.paths col.cssd{width:252px}
@@ -626,7 +626,7 @@
 .ctl .journey.picking .btree li.lit{color:var(--fg)}
 @media(max-width:1100px){.ctl .jgrid{grid-template-columns:1fr}
 .ctl .jpanel{position:static;display:grid;grid-template-columns:1fr 1fr}}
-@media(max-width:760px){.ctl .jpanel{grid-template-columns:1fr}
+@media(max-width:900px){.ctl .jpanel{grid-template-columns:1fr}
 .ctl table.jt thead{display:none}
 .ctl table.jt,.ctl table.jt tbody,.ctl table.jt tr,.ctl table.jt td{display:block;width:100%}
 .ctl table.jt colgroup{display:none}
@@ -989,7 +989,7 @@
 .ctl .stalebar,.ctl .errbar{padding:7px 12px;border-radius:8px;font-size:12.5px;color:var(--fg)}
 .ctl .stalebar{background:var(--warnb);border-left:3px solid var(--warn)}
 .ctl .errbar{background:var(--badb);border-left:3px solid var(--bad)}
-@media(max-width:760px){.ctl .chipb,.ctl .bfcr,.ctl .bfhd .btn,.ctl .bfgrid.l-d .bfx,.ctl .uhand .btn,.ctl .wiali,.ctl .tch .tpick,.ctl .tch .topen,.ctl .lnk,.ctl .fc .fpk{min-height:44px}
+@media(max-width:900px){.ctl .chipb,.ctl .bfcr,.ctl .bfhd .btn,.ctl .bfgrid.l-d .bfx,.ctl .uhand .btn,.ctl .wiali,.ctl .tch .tpick,.ctl .tch .topen,.ctl .lnk,.ctl .fc .fpk{min-height:44px}
 .ctl .tch .tpick,.ctl .tch .topen{line-height:44px}
 .ctl .btree li.on,.ctl .journey .btree li.on{min-height:44px;line-height:44px}
 .ctl .bfdn{flex-basis:44px}
@@ -1006,7 +1006,7 @@
 @media(max-width:620px){.ctl .useg.uoff .uoffl{display:inline}}
 @media(min-width:761px){.ctl .bfgrid.l-y{grid-template-columns:repeat(auto-fill,minmax(122px,1fr))}}
 @media(max-width:1100px){.ctl .dbar .cost,.ctl .dbnote{justify-self:start;text-align:left}}
-@media(max-width:760px){.ctl .dbnote .lnk,.ctl .ulive .lnk{min-height:44px}
+@media(max-width:900px){.ctl .dbnote .lnk,.ctl .ulive .lnk{min-height:44px}
 .ctl details.sec .legacyrow>summary{min-height:44px}}
 /* The board's own additions to the design: the named groups a narrowed press asks for, the note under the hand-typed
    names, the old sections' fold, a planned (dashed) reader. */
@@ -1016,7 +1016,7 @@
 .ctl .uhnote{margin:6px 0 0;font-size:12px}
 .ctl .btree li.planned{font-style:italic}
 .ctl .btree li.planned i{opacity:.6}
-@media(max-width:760px){.ctl .tch .topen{min-width:44px;justify-content:center}
+@media(max-width:900px){.ctl .tch .topen{min-width:44px;justify-content:center}
 .ctl .uhand input{min-height:44px}
 .ctl details.group>summary{min-height:44px}}
 
@@ -1055,7 +1055,7 @@
 .ctl .fcol .fd{color:var(--mut)}
 .ctl .psrc{font-size:11.5px;color:var(--mut);margin:0 0 8px}
 @media(min-width:861px){.ctl .plim{grid-template-columns:minmax(0,1fr) minmax(0,.9fr) max-content minmax(0,.75fr) minmax(0,1.6fr)}}
-@media(max-width:760px){.ctl .sgrid,.ctl .ucards,.ctl .fcols{grid-template-columns:1fr}
+@media(max-width:900px){.ctl .sgrid,.ctl .ucards,.ctl .fcols{grid-template-columns:1fr}
 .ctl .sract{margin-left:0}}
 .ctl .hgrps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:8px}
 .ctl .hgrp{min-width:0}
@@ -1078,7 +1078,7 @@
 .ctl .segn{font-variant-numeric:tabular-nums;color:var(--mut)}
 .ctl .bfs{min-width:0}
 @media(max-width:900px){.ctl .hgrps{grid-template-columns:1fr}}
-@media(max-width:760px){.ctl .bfl{grid-template-columns:1fr 1fr}.ctl .bfs{grid-column:1/-1}}
+@media(max-width:900px){.ctl .bfl{grid-template-columns:1fr 1fr}.ctl .bfs{grid-column:1/-1}}
 /* #715 step 3: the six served files are stacked folded sections, not a picker strip. Each keeps its file's
    colour on the left edge; the body is indented like the Fetch tab's groups. */
 .ctl details.fpanel>summary h2{font-family:var(--f-mono,monospace)}
@@ -1093,7 +1093,7 @@
 .ctl .scroll{max-width:100%;overflow-x:auto}
 .ctl .sbox .uni,.ctl .sbox .fillrow,.ctl .sbox .acts{max-width:100%;min-width:0}
 .ctl .bfl,.ctl .btn,.ctl .lnk,.ctl .fc{min-height:44px}
-@media(max-width:760px){.ctl .wrap{padding-left:max(8px,env(safe-area-inset-left,0px));padding-right:max(8px,env(safe-area-inset-right,0px))}
+@media(max-width:900px){.ctl .wrap{padding-left:max(8px,env(safe-area-inset-left,0px));padding-right:max(8px,env(safe-area-inset-right,0px))}
 .ctl .fpanel{padding-left:8px}
 .ctl .ubar{overflow-x:auto}}
 /* #472 schedule fields in a source box */
@@ -1117,7 +1117,7 @@
 .ctl .topbar .swt.warn{border-left-color:var(--warn)}
 .ctl .topbar .swt.none{border-left-color:var(--mut)}
 .ctl .topbar .swt .dim{font-size:.85em}
-@media(max-width:760px){.ctl .topbar .swt{flex:1 1 100%}}
+@media(max-width:900px){.ctl .topbar .swt{flex:1 1 100%}}
 
 /* #527 step 5: problem cards only, the rest in one line, every tile one tap away */
 .ctl .alerts{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin:8px 0}
@@ -1126,7 +1126,7 @@
 .ctl details.htiles>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--mut)}
 .ctl details.htiles>summary::before{content:"▸ ";margin-right:4px}
 .ctl details.htiles[open]>summary::before{content:"▾ "}
-@media(max-width:760px){.ctl .alerts{grid-template-columns:1fr}}
+@media(max-width:900px){.ctl .alerts{grid-template-columns:1fr}}
 
 /* #527 steps 6-7: the queue reads whole names, Stop beside the status, the limit line, a long note cut */
 .ctl .qtbl code.dsn{white-space:nowrap}
@@ -1144,7 +1144,7 @@
 .ctl .useg{flex:1 1 auto}
 .ctl .dsec h3.dsh{font-size:1.15em;margin:14px 0 4px}
 .ctl .btn.sm{min-height:32px;padding:2px 10px;font-size:.85em}
-@media(max-width:760px){.ctl .btn.sm{min-height:44px}}
+@media(max-width:900px){.ctl .btn.sm{min-height:44px}}
 
 /* #527, the second Data page pass: one visible line and a "?", the idle Pause, the Cross-check in the journey's style */
 .ctl .blegend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px;margin:6px 0}
@@ -1188,7 +1188,7 @@
 /* Live again at 1187 px after that fix: 10 px past the page. With the name at zero and the buttons wrapped, the
    provider badges were the one part left that could not give way. They clip down to their icon last. */
 .ctl .sb1 .srcb{flex:0 1 auto;min-width:24px;overflow:hidden}
-@media(max-width:760px){.ctl .sb1{flex-wrap:wrap}.ctl .sb1 .dsname{white-space:normal;overflow-wrap:anywhere}}
+@media(max-width:900px){.ctl .sb1{flex-wrap:wrap}.ctl .sb1 .dsname{white-space:normal;overflow-wrap:anywhere}}
 /* The Data tab's "What am I looking at?" box sits in a .ctl band of its own, so it takes the board's themed tokens
    instead of the page's old dark-only ones (seen in the #539 screenshots: dark in light). */
 .ctl .help{background:var(--card);border-color:var(--line);color:var(--mut)}
@@ -1217,11 +1217,11 @@
 .ctl .bfpanels details.tch>summary{min-height:28px;align-items:center}
 .ctl .bfpanels .tchs{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;align-items:start}
 .ctl .bfpanels .bfwhere,.ctl .bfpanels .bfalso{margin:0 0 6px;font-size:12px;color:var(--mut)}
-@media(max-width:640px){.ctl .bfpanels{margin-top:22px}
+@media(max-width:900px){.ctl .bfpanels{margin-top:22px}
 .ctl .bfpanels details.tch>summary{min-height:44px}}
 /* avo, 12 Nov 2026 (phone, the Fetch/Health leftovers): "biraz daha kompakt". A dataset box is its name, then its
    coverage on one line (label, bar, share), with less air around and between the boxes. */
-@media(max-width:640px){
+@media(max-width:900px){
 .ctl .fgroup{padding:6px 8px 8px}
 .ctl .fgroup .sgrid{gap:6px;margin:6px 0}
 .ctl .fgroup .dset{margin-top:0;padding:6px 10px}

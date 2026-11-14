@@ -19,10 +19,15 @@ XBRL: 0.6% of the stored annual reports) does not read as stale on every run, wh
 against stored rows would have done.
 
 **Which cutter version.** :data:`SECTIONS_VERSION` is what this layer stores with today, and every row carries the
-version that wrote it (``rules_version``). ``ours-2`` (#755, #756) lifts the 200,000-character cap and fixes the
-five item defects; when it lands, :data:`SECTIONS_VERSION` moves to it and the rule above re-cuts every company,
-one build, no re-fetch. Until then the sections are what ``ours-1`` gives, cap included -- said plainly here
-because the plan's §3 describes the uncut text ``ours-2`` will store.
+version that wrote it (``rules_version``). It is ``ours-2`` (#755, #756, #845): the 200,000-character cap is gone,
+so a long section is stored whole and no row is ever labelled ``capped``, the five item defects are fixed, and a
+40-F's business section is cut by ``ours-2``'s own rule. The suspect signals ride along, because
+:func:`sec_sections.cut_flag` picks the set by version (S8, the length against the cap, is not in ``ours-2``'s).
+Moving the pin again re-cuts every company in one build, with no re-fetch -- which is why it moved **before** the
+first full cut rather than after it, so that pass is paid once (#845).
+
+``module_value_chain/splitter.VERSION`` and ``filing_item`` stay on ``ours-1``: those tables carry no version
+column, so each board moves on its own change, with the owner's before/after look.
 
 **Which cutter.** :func:`sections_of` is the one seam, and in this change it calls ``rcdata/sec_sections.py``
 only. ``cutter.py`` beside this module (#754) is the edgartools item cutter in its own venv, the owner's decision
@@ -63,7 +68,7 @@ UNCUT, HEADER, AIF = "uncut", "header", "aif"
 SECTIONS = (WHOLE, PROXY, BUSINESS)
 
 #: The cutter version this layer stores sections with, and the note reader's own version. Both ride on every row.
-SECTIONS_VERSION = sec_sections.OURS_1
+SECTIONS_VERSION = sec_sections.OURS_2
 NOTES_VERSION = sec_notes.NOTES_VERSION
 
 _STAMPS = [("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
@@ -126,6 +131,21 @@ def _span(whole: str, part: str) -> tuple[int | None, int | None]:
     return (i, i + len(part)) if i >= 0 else (None, None)
 
 
+def _flag(quality: str, text: str, item: str | None, form: str, *, aif: bool = False) -> str:
+    """``quality`` with :data:`SECTIONS_VERSION`'s own ``;suspect`` flags (#835).
+
+    Every business row carries them, not the 40-F's alone: ``module_relatedness.locator.asks`` and Value Chain
+    read this column, and a 10-K whose cut is wrong but labelled ``ok`` is the case the flags exist for -- 24 of
+    the 29 wrong cuts of the 10-K reading report were labelled ``ok``. Which signals a version defines is
+    :attr:`sec_sections.Rule.item_signals` and :attr:`sec_sections.Rule.aif_signals`, so the row's
+    ``rules_version`` says what was computed -- for a row written after #838, which is what split the two.
+
+    ``aif`` is True for the one row this layer cuts with :func:`sec_sections.cut_aif_business`, because which
+    cutter made the text is what picks the set and the form string does not say it (#838).
+    """
+    return sec_sections.cut_flag(quality, text, item, form, version=SECTIONS_VERSION, aif=aif)
+
+
 def sections_of(html: str, form: str, *, exhibit: bool = False, by_name: object = None) -> list[tuple]:
     """``(section, text, quality, method, start_char, end_char)`` per section of one document.
 
@@ -147,11 +167,11 @@ def sections_of(html: str, form: str, *, exhibit: bool = False, by_name: object 
         # section is the Annual Information Form block when the primary document keeps one.
         aif = sec_sections.cut_aif_business(text, version=SECTIONS_VERSION)
         if aif:
-            out.append((BUSINESS, aif, sec_sections.flag("ok", text, aif, form), AIF, *_span(text, aif)))
+            out.append((BUSINESS, aif, _flag("ok", text, aif, form, aif=True), AIF, *_span(text, aif)))
         return out
     item, quality = sec_sections.cut_item(text, form, version=SECTIONS_VERSION)
     if item:
-        out.append((BUSINESS, item, quality, HEADER, *_span(text, item)))
+        out.append((BUSINESS, item, _flag(quality, text, item, form), HEADER, *_span(text, item)))
     return out
 
 

@@ -164,20 +164,13 @@ body{margin:0;background:var(--bg);color:var(--fg);font:var(--fs-base)/1.4 var(-
 .c-n b,.c-p b{font-size:var(--fs-base);font-weight:600;color:var(--bright)}
 .c-n span{font-size:var(--fs-xs);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .c-p{text-align:right}
-/* The watch-list pair as symbols, the way 13F draws it (avo 12 Nov 2026: "OPT ve STK cok yer kapliyor sadece sembol
-   kullanarak coz"): the text is hidden, a mask icon in currentColor takes its place, the aria-label and title name
-   the list. 28 px halves with a mouse, 44 px on a touch screen. */
-.lp .rc-watch{margin:0;gap:0;border:1px solid var(--input-border);border-radius:var(--r-sm);overflow:hidden;flex:none}
-.lp .rc-watch button{border:0;border-radius:0;min-width:28px;min-height:28px;width:28px;height:28px;padding:0;font-size:0;
-  line-height:0;background:transparent;color:var(--muted);display:inline-flex;align-items:center;justify-content:center}
-.lp .rc-watch button::before{content:"";width:14px;height:14px;background:currentColor;
-  -webkit-mask:var(--ico) center/contain no-repeat;mask:var(--ico) center/contain no-repeat}
-.lp .rc-watch button[data-rc-watch="option"]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 2 4 14h7l-1 8 9-12h-7l1-8z'/%3E%3C/svg%3E")}
-.lp .rc-watch button[data-rc-watch="stock"]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20V10M10 20V4M16 20v-7M22 20H2'/%3E%3C/svg%3E")}
-@media (pointer:coarse){.lp .rc-watch button{min-width:44px;min-height:44px;width:44px;height:44px}
-  .lp .rc-watch button::before{width:18px;height:18px}}
-.lp .rc-watch button+button{border-left:1px solid var(--input-border)}
-.lp .rc-watch button[aria-pressed="true"]{background:var(--accent);color:var(--primary-fg)}
+/* The "add to list" bookmark (watch lists, step 5): the shared component draws it; the board only sizes it,
+   28 px with a mouse, 44 px on a touch screen. */
+.lp .rc-watch{margin:0;flex:none}
+.lp .rc-watch button{min-width:28px;min-height:28px;height:28px;padding:0 4px;border-radius:var(--r-sm)}
+.lp .rc-watch button svg{width:14px;height:14px}
+@media (pointer:coarse){.lp .rc-watch button{min-width:44px;min-height:44px;height:44px}
+  .lp .rc-watch button svg{width:18px;height:18px}}
 .sh{display:flex;align-items:center;gap:var(--sp-2)}
 .sh .lab{font-size:var(--fs-xs);color:var(--muted);flex:none}
 .sh .val{font-size:var(--fs-base);font-weight:700;color:var(--bright);width:48px;text-align:right;flex:none}

@@ -399,16 +399,18 @@ def test_the_board_head_says_when_fetch_and_backup_were_last_done(monkeypatch):
     assert metrics.board_head(NOW, ibkr=lambda: None)["last"] == {"fetch": None, "backup": None}
 
 
-def test_the_grafana_link_sits_under_the_frame():
-    """avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": no row above the frame. It is not laid over the
-    frame either: the frame scrolls inside itself, so an overlay ends up printed on the rows scrolling under it
-    (avo's phone, 13 Nov 2026). It is a line after the frame, and stays a 44 px target."""
+def test_the_page_keeps_no_row_for_the_grafana_link():
+    """avo, 12-13 Nov 2026: "Open in Grafana ... cok yer kapliyor ... window seçen, refresh rate'i seçen kısmın
+    yanına koyabilirsin". The link had a row above the frame, then one under it; it now rides inside the board as a
+    Grafana dashboard link, drawn in Grafana's own controls row beside the time picker (home-server #316). So the
+    page draws the frame and nothing else, and nothing is laid over a frame that scrolls inside itself."""
     from RevenueChaser.module_settings import report
-    assert "position:absolute" not in report.LIVE_CSS
     board = report._live_board("panel-health")
-    assert board.index("<iframe") < board.index('class="livebar"')
-    assert "min-height:44px" in report.LIVE_CSS.split(".live-board .livebar a{")[1].split("}")[0]
-    assert "margin:12px auto 8px" not in report.LIVE_CSS
+    assert "livebar" not in board and "live-open" not in board
+    assert board.count("<iframe") == 1
+    for gone in ("livebar", "live-open", "position:absolute"):
+        assert gone not in report.LIVE_CSS
+    assert "live-open" not in report.LIVE_JS, "nothing left to give an address to"
 
 
 def test_the_board_head_carries_the_news_feeds_in_the_listener_s_words():

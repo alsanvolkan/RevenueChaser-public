@@ -50,8 +50,9 @@ CAPPED = "capped"
 #: How many AIF exhibits of one 40-F are kept. shortcut: one filing has never been seen with more than one, so the
 #: largest is taken; upgrade the number if a filer splits its Annual Information Form across exhibits.
 _AIF_PER_FILING = 1
-#: The one sliced item: ``business`` is Value Chain's own field and its slicer caps it
-#: (``module_value_chain/splitter.py``), which is that board's rule and not changed here. Everything else this
+#: The one sliced item: ``business`` is Value Chain's own field, cut by the version that board pins
+#: (``module_value_chain/splitter.py``), which is that board's rule and not changed here. Whether it caps is that
+#: version's too (:attr:`rcdata.sec_sections.Rule.caps`); since #847 the pin is ``ours-2``, which caps nowhere. Everything else this
 #: layer stores is kept entire (avo, 5 Nov 2026: "belgeyi hic kesmeyelim, hepsi kalsin"): ``whole``, ``proxy``
 #: and an ``aif`` exhibit carry the filer's own length.
 SLICED_ITEMS = ("business",)
@@ -82,6 +83,21 @@ CUSTOMER = _FILED + [("customer", "TEXT"), ("member", "TEXT"), ("benchmark", "TE
 def max_text_chars() -> int:
     from ....module_value_chain import config
     return int(config.MAX_ITEM_CHARS)
+
+
+def caps_text() -> bool:
+    """True while the cut Value Chain pins caps its slice at :func:`max_text_chars`, and may answer ``capped``.
+
+    The cap is a property of the version, not of this layer (``rcdata.sec_sections.Rule.caps``): ``ours-1``
+    truncates at 200,000 characters and labels the slice ``capped``, ``ours-2`` caps nowhere and the section
+    arrives whole (#847). Two things read this -- the label :func:`document_sections` puts on a ``business`` row,
+    and the ``filing_item`` CHECK in ``tables.py`` that refuses ``ok`` at the cap, which would otherwise refuse a
+    long and correct ``ours-2`` section at build time. ``rules_state`` carries it, so a live copy of the table
+    rebuilds whole when the pin moves.
+    """
+    from ....module_value_chain import splitter
+    from ...sec_sections import rule
+    return bool(rule(splitter.VERSION).caps)
 
 
 def min_text_chars() -> int:
@@ -256,6 +272,12 @@ def document_sections(html: str, form: str) -> list[tuple[str, str, str]]:
     before a rule is chosen, so they come in their own change.
     """
     from ....module_value_chain import splitter
+    # ``capped`` is a claim that the text below is only part of the section, and only a version whose cutter caps
+    # can make it (#847). ``ours-2`` caps nowhere, so the same long slice is whole here, and labelling it
+    # ``capped`` would say the opposite -- and send ``module_relatedness.locator.asks()`` off to pay a model to
+    # re-cut a section that is already right. ``Rule.caps`` is about ``slice_item``; the AIF block of a version
+    # that labels its own (``aif_business_q``) does not cap either, and both are off together today.
+    caps = caps_text()
     cap = max_text_chars()
     text = splitter.strip_html(html)
     if form in PROXY_FORMS:
@@ -267,11 +289,13 @@ def document_sections(html: str, form: str) -> list[tuple[str, str, str]]:
         # plus the business section of an Annual Information Form kept in the primary document (CNQ, #400 WP3).
         aif = splitter.aif_business(text)
         if aif:
-            out.append(("business", aif, CAPPED if len(aif) >= cap else splitter.flag("ok", text, aif, form)))
+            out.append(("business", aif, CAPPED if caps and len(aif) >= cap
+                        else splitter.cut_flag("ok", text, aif, form, version=splitter.VERSION, aif=True)))
         return out
     item, quality = splitter.slice_item(text, form)
     item = item or ""
-    out.append(("business", item, CAPPED if len(item) >= cap else splitter.flag(quality, text, item, form)))
+    out.append(("business", item, CAPPED if caps and len(item) >= cap
+                else splitter.cut_flag(quality, text, item, form, version=splitter.VERSION)))
     return out
 
 

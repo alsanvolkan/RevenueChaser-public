@@ -14,7 +14,7 @@ import pytest
 
 from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import ledger, rawstore
-from RevenueChaser.module_value_chain import config, engine, history as vc_history, precision, sync
+from RevenueChaser.module_value_chain import config, engine, history as vc_history, precision, splitter, sync
 from RevenueChaser.module_value_chain.tests.test_sync import _seed as _seed_sync, _subs
 from RevenueChaser.module_value_chain.tests.test_value_chain import _TEN_K
 
@@ -76,10 +76,13 @@ def test_the_header_carries_model_version_and_params(store):
 
 @pytest.mark.parametrize("module, name, value", [("config", "MENTION_WINDOW", 200), ("config", "MIN_ITEM_CHARS", 10),
                                                  ("precision", "MIN_PRECISION", 0.9),
-                                                 ("precision", "MAX_EDGES_PER_TICKER", 10)])
+                                                 ("precision", "MAX_EDGES_PER_TICKER", 10),
+                                                 # The cut itself: a run on ours-1 text and one on ours-2 text
+                                                 # must not be stored under the same model_version (#847).
+                                                 ("splitter", "VERSION", "ours-1")])
 def test_model_version_changes_with_a_setting(monkeypatch, module, name, value):
     before = vc_history.model_version()
-    monkeypatch.setattr({"config": config, "precision": precision}[module], name, value)
+    monkeypatch.setattr({"config": config, "precision": precision, "splitter": splitter}[module], name, value)
     assert vc_history.model_version() != before
 
 

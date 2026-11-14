@@ -1029,7 +1029,7 @@ its spill peak (`base.spill_peak`, sampled every 2 s), the measure for moving th
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`, `sec_forms`. Each kind is one
 file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `6`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
-below; the ownership store, `ownership` (serving schema version `3`), under "The ownership store" below; the
+below; the ownership store, `ownership` (serving schema version `4`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `3`), under "Fundamentals" after it; and the options
 data, `options` (serving schema version `3`), under "The options data" after it; and the SEC form reader, `sec_forms` (serving schema version `1`), under "The SEC form reader" last. The seven numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
 (`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
@@ -1706,8 +1706,8 @@ are read from **both** sides UW names — an institution's `succession.predecess
 carried a `succeeded_by`, while HPS Investment Partners → BlackRock (effective 2025-09-30) was in BlackRock's
 `predecessors` alone.
 
-**Served tables** (`ownership` serving schema version `3`; 3 since #775: `uw_institution` and
-`uw_institution_succession`; 2 since #732: the continuing-filer flows and `sec13f_filer_breaks`):
+**Served tables** (`ownership` serving schema version `4`; 4 since #760: `sec13f_type_holdings`; 3 since #775:
+`uw_institution` and `uw_institution_succession`; 2 since #732: the continuing-filer flows and `sec13f_filer_breaks`):
 
 | Table | Rows |
 |---|---|
@@ -1723,6 +1723,7 @@ carried a `succeeded_by`, while HPS Investment Partners → BlackRock (effective
 | `sec13f_ticker_period` | one per ticker and period: shares, value, holders, top-10 %, HHI, new / exited holders, buy / sell flow, breadth and its change, `prev_period`, `filing_deadline`. The period is the calendar quarter end; a filing's period that is not one (09-29 for the September quarter) counts in its quarter, and `sec13f_filings` keeps it as written |
 | `sec13f_periods` | one per period: filers, value, value mapped, `coverage`, unmapped CUSIPs, refused value, rescaled filers |
 | `sec13f_filer_breaks` | one per ticker, settled period and filer that started (`started`: no report in the quarter before) or stopped (`stopped`: none in the quarter) reporting it, with its shares; the flows leave these filers out (#732). A filer UW lists as succeeded in the quarter it stops (`uw_institution_succession`, newest snapshot), whose successor reports that quarter, is its successor in the quarter before: one filer across the hand-over, no stop and no start (#776) |
+| `sec13f_type_holdings` | one per investor type, period and rank: the type's 25 largest tickers (`TYPE_TOP`) by the value its filers hold, each with its `share` (%) of the type's mapped portfolio, and one row with `ticker` NULL for the rest, so a quarter's shares add up to 100; `type_value`, `type_filers` and the `uw_institution` `snapshot_date` its types come from. A type is a tag UW gives the filer's CIK in the newest snapshot (a filer can carry several), plus `all` for every filer (#760) |
 | `uw_institution` | one per snapshot day and CIK: `name`, `short_name`, `tags` (sorted), `is_hedge_fund`, the report and filing dates, total and share value, `succeeded_by_cik` with its `succeeded_by_report_date`, and `current_holder_cik` |
 | `uw_institution_succession` | one per snapshot day, predecessor CIK, successor CIK and `effective_report_date`, with both names and `origin` (`predecessors`, `succeeded_by` or `both`) |
 | `sec13f_data_sets` | one per 13F data set the SEC page ever listed: `name`, `first_day`, `last_day`, `url`, `first_seen`; a period is `closed` once a listed set's window holds its filing deadline (#732) |
@@ -1995,7 +1996,16 @@ one folder, two Parquet files (`sections.parquet`, `notes.parquet`) per `cik=<ci
   `filing_date`, `report_date`, `section` (`whole`, `proxy`, `business`), `text`, `chars`, `quality`,
   `start_char`, `end_char` (where the section sits in `whole`; NULL for an uncut row and for a cut the rule
   altered), `method` (`uncut`, `header`, `aif` — how it was found, so a weak method can be withdrawn alone),
-  `rules_version`, and the provenance `source_as_of`, `fetched_at`, `run_id`. `document` is in the key because one
+  `rules_version`, and the provenance `source_as_of`, `fetched_at`, `run_id`.
+  A `business` row's `quality` may carry suspect flags after the label — `ok;suspect:S2,S4` — so **read it
+  through `sec_sections.base()`, never by comparing the whole string** (#835). The flags are the ones the row's
+  `rules_version` defines for the cutter that made the row: `sec_sections.Rule.item_signals` for a `header`
+  row, `Rule.aif_signals` for an `aif` one. The two are not the same list — S3 and S6 ask a 10-K item question
+  that an Annual Information Form has no answer to, so a correctly cut AIF read `ok;suspect:S2,S3` until #838
+  split them. Two caveats, both of the same shape: the flags were added to this table while `ours-1` kept its
+  name, and #838 changed `ours-1`'s AIF set under the same name, and the layer re-cuts a company only when its
+  documents change or the version string moves — so `ours-1` rows written before those changes carry no flags,
+  or the item set's answer for an AIF, and are indistinguishable from rows written after. The population becomes uniform when `SECTIONS_VERSION` next moves and re-cuts everything. `document` is in the key because one
   accession can hold more than one document this cuts: a 40-F's AIF exhibit is a second one.
 - `filing_note` — one row per (filing, document, text block), from the filer's own inline-XBRL text blocks
   (`rcdata/sec_notes.py`): `concept` as filed, `taxonomy`, `local_name`, `kind` (`disclosure`, `table`, `policy`),
@@ -2011,10 +2021,18 @@ accession. A filing that legitimately yields **no** note rows (no inline XBRL: 0
 does not read as stale on every run, which comparing expected rows against stored rows would have done. The
 dataset's check reports rows per `rules_version`, so a half-migrated table is visible rather than inferred.
 
-**Which cutter version.** Sections are cut by `rcdata/sec_sections.py` at `ours-1` and notes read at `notes-1`,
-and every row carries the version that wrote it. `ours-2` (#755, #756) lifts the 200,000-character cap on the
-business section and fixes the five item defects; when it lands, the version constant moves to it and the rule
-above re-cuts every company in one build, with no re-fetch.
+**Which cutter version.** Sections are cut by `rcdata/sec_sections.py` at `ours-2` and notes read at `notes-1`,
+and every row carries the version that wrote it. `ours-2` (#755, #756, pinned here by #845) lifts the
+200,000-character cap on the business section — so no row is labelled `capped` — fixes the five item defects, and
+carries its own 40-F rule: six start titles and ten stop titles instead of one each, a contents test and a body
+minimum in place of the cap, and a label (ok / overrun / missing) read through `cut_aif_business_q`. It was pinned
+before the first full cut, because moving the version re-cuts every company in one build and that pass is paid
+once. The Value Chain board (`module_value_chain/splitter.py`) pins the version `chain_filings` and `filing_item`
+are cut at; neither table carries a version column, so that pin moves on its own change, with its own re-slice.
+#847 moved it to `ours-2` as well, which is why the `capped` label and the `filing_item` CHECK that refuses `ok`
+at the cap now follow `filings.caps_text()` rather than being written in: `ours-2` caps nowhere, so a long and
+correct section is stored whole and `ok`. The stored rows were cut by `ours-1` until `reslice.apply` rewrites
+them, which rides the first full SEC cut as one run; `filing_item` is re-cut by the fundamentals build.
 
 **Needs.** `sec.whole`, `sec.business`, `sec.proxy` and `sec.note`, each with its own reader and `ask_required`
 (the text is gigabytes: nothing is answered unless a company is named). The three section needs share one table

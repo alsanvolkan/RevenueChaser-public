@@ -143,4 +143,4 @@
 /* #715, avo 13 Nov 2026 (phone, "onlara ihtiyacımız yok"): the need catalog, the routes, the board inputs and the
    automations are reference parts and forms for the desk; on a phone the Database tab ends after the files.
    A read that failed is not one of them and stays in sight. */
-@media(max-width:640px){#needs details.hfold{display:none}}
+@media(max-width:900px){#needs details.hfold{display:none}}

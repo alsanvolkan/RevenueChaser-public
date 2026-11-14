@@ -228,6 +228,9 @@ _NEEDS = (
     # Where a ticker's 13F flow breaks: the filers that started or stopped reporting it in a settled quarter (#732).
     Need("ownership.filer_breaks_13f", "filer_breaks_13f", "sec13f_filer_breaks", "period", "ticker", 65,
          ask_param="tickers", normalize=TICKER, providers=("sec",)),
+    # What each investor type (UW's institution tags) holds most, per quarter (#760).
+    Need("ownership.type_holdings_13f", "type_holdings_13f", "sec13f_type_holdings", "period", "tag", 65,
+         providers=("sec", "uw")),
     Need("ownership.shortable", "shortable", "ibkr_shortable", "session_date", "ticker", 1,
          ask_param="tickers", normalize=TICKER, providers=("ibkr",)),
     Need("ownership.threshold", "threshold_list", "regsho_threshold", "list_date", "ticker", 1,
