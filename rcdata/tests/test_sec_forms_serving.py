@@ -108,6 +108,29 @@ def test_the_business_row_is_the_item_and_its_span_in_the_whole_document(sec):
     assert whole[0][start:end] == item, "the span points at the section inside the whole document"
 
 
+def test_an_empty_cut_is_still_a_business_row_carrying_the_cutters_label(sec):
+    """#843: a filing the item rule cannot cut gets the row anyway, with empty text and ``crossref``.
+
+    HSBC, Barclays, America Movil and Vodafone file the annual report itself and map the form's items to it in a
+    table, so there is no span to cut: 22 of the 5,131 stored annual reports (13 Nov 2026). Appending the row only
+    ``if item`` dropped the label with the text, and a reader cannot tell "the section is in another document, do
+    not look" from "no row" -- not cut yet, or a cut that failed. ``module_relatedness.locator.asks`` (#841) reads
+    this label and pays for a locator call on the ``missing`` path that no row can answer.
+    """
+    # The index maps each item to a page and carries no item caption the start patterns could read as a heading,
+    # which is why this filing's cut is empty and not a few characters of the table (McDonald's own index does
+    # give a caption: ``test_sec_sections_ours_2`` holds that case).
+    index = "Form 10-K Cross-Reference Index\nPage reference\nPart I\n1 Business 3\n1A Risk Factors 27\n"
+    report = "<html><body>About the group.\n" + "This annual report describes the group. " * 200 + "\n" + index
+    _stored(sec, documents={"msft-10k.htm": report + "</body></html>"})
+    assert _cut()["result"] != "failed"
+    rows = q("SELECT text, chars, quality, method, start_char, end_char FROM filing_section "
+             "WHERE cik = ? AND section = 'business'", MSFT)
+    assert rows == [("", 0, "crossref", forms.HEADER, None, None)], rows
+    # And the other rows of the same filing are untouched: the whole document is still served whole.
+    assert q("SELECT chars > 0 FROM filing_section WHERE cik = ? AND section = 'whole'", MSFT) == [(True,)]
+
+
 def test_the_note_blocks_of_the_annual_report_are_served_with_their_chain_joined(sec):
     _stored(sec)
     _cut()
