@@ -1,7 +1,11 @@
 """Review F1 (28 Oct): Quality mixes two time bases and the board now says so. Its growth half is the trailing
 twelve months (the card's Period), while ROIC, gross margin and Net Debt / EBITDA are read from one fiscal year,
 the anchor year. ``anchor_period_end`` was in the payload but never shown, so a reader could not tell which year
-those three figures came from. The card's Quality cell and the Quality rules window now name it."""
+those three figures came from. The Quality rules window names it.
+
+The card's Quality cell named it too until 14 Nov 2026, when avo cut the face from seven cells to four ("Yap",
+12:07 Amsterdam): the cell repeated the Quality gate button beside it. F1's point is unchanged -- a reader can
+still tell which year the three figures come from -- but it is now the window that says so, one tap away."""
 from __future__ import annotations
 
 import json
@@ -31,11 +35,11 @@ console.log(JSON.stringify({grid: _els['grid'].innerHTML, sub: _els['m-sub'].tex
 """ % json.dumps(gate), tmp_path)
 
 
-def test_the_card_and_the_quality_window_name_the_fiscal_year(tmp_path):
+def test_the_quality_window_names_the_fiscal_year(tmp_path):
     out = _run(_payload("2025-12-31"), tmp_path)
-    assert "FY to 2025-12-31" in out["grid"]
     assert "growth: TTM Q2/2026 vs Q2/2025" in out["sub"]
     assert "ROIC, gross margin, net debt: fiscal year to 2025-12-31" in out["sub"]
+    assert "FY to 2025-12-31" not in out["grid"], "the card face no longer repeats it"
 
 
 def test_other_gates_keep_their_window(tmp_path):
@@ -43,8 +47,10 @@ def test_other_gates_keep_their_window(tmp_path):
     assert "fiscal year" not in out["sub"]
 
 
-def test_no_anchor_says_nothing_and_a_hostile_one_is_escaped(tmp_path):
+def test_no_anchor_says_nothing_and_a_hostile_one_cannot_run(tmp_path):
     out = _run(_payload(None), tmp_path)
-    assert "FY to" not in out["grid"] and "fiscal year" not in out["sub"]
+    assert "fiscal year" not in out["sub"]
     out = _run(_payload(_EVIL), tmp_path)
-    assert "<img" not in out["grid"] and "&lt;img" in out["grid"]
+    # The anchor reaches the window through ``textContent``, so it is text there and never enters the grid's HTML.
+    assert "<img" not in out["grid"]
+    assert _EVIL in out["sub"]

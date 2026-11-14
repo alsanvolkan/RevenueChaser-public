@@ -1,4 +1,4 @@
-"""Fundamental Analysis — dark-theme HTML renderer.
+"""Fundamental Analysis — HTML renderer, on the shared theme (light and dark, #840).
 
 Mirrors the Swing/Hunter layout: topbar, narrative summary, banner, universal
 filters (Market Cap / Earnings / sector / theme / search) plus gate tabs
@@ -19,6 +19,8 @@ from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
     FILTERS_JS,
     PAYLOAD_JS,
+    THEME_CSS,
+    THEME_JS,
     filters_bar_html,
     filters_meta,
     help_html,
@@ -30,11 +32,18 @@ from RevenueChaser.core.reporting_common import (
 from RevenueChaser.core.scan_quality import no_data_hint, regime_parts
 from RevenueChaser.module_fundamentals.pipeline import NON_USD_DROP
 
+# The board's own rules, on the shared theme's tokens (#840). ``THEME_CSS`` defines every ``var(--…)`` below in
+# both schemes, so the cards follow the shell instead of staying dark inside a light page. The names kept here are
+# local aliases of shared tokens, so the rules underneath read as they did: ``--panel`` / ``--panel2`` are the two
+# card surfaces (``--card`` / ``--card-2``), ``--text`` the body colour (``--fg``), ``--green`` / ``--red`` the
+# pass / fail colours (``--pos`` / ``--neg``), and ``--neon`` the selection colour (``--accent``) -- which is what
+# it marked: the ticked rule boxes and the active tab's count. ``--rcf-pop-bg`` is the filter bar's popover, whose
+# own fallback is a dark literal. The same aliasing is what the 13F board does (#761).
 CSS = """
-:root{--bg:#0a0d12;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
---text:#d7dce5;--muted:#8a93a6;--accent:#4f9dff;--green:#2ecc71;
---red:#e74c3c;--amber:#f1c40f;--neon:#00e6a8;}
+:root{--panel:var(--card);--panel2:var(--card-2);--text:var(--fg);--green:var(--pos);--red:var(--neg);
+--neon:var(--accent);--rcf-pop-bg:var(--card)}
 *{box-sizing:border-box}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5}
 .wrap{max-width:100%;margin:0 auto;padding:20px 24px 60px}
 .topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:14px}
@@ -44,10 +53,10 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"
 .summary b{color:var(--text);font-weight:600}
 .summary .on{color:var(--green);font-weight:700}
 .summary .off{color:var(--red);font-weight:700}
-.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700}
 .b-sector{background:var(--panel2);color:var(--muted)}
-.b-index{background:rgba(79,157,255,.14);color:var(--accent)}
-.b-dist{background:rgba(231,76,60,.15);color:var(--red)}
+.b-index{background:var(--accent-soft);color:var(--accent)}
+.b-dist{background:var(--neg-soft);color:var(--red)}
 .banner{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:18px}
 .stat{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
 .stat .v{font-size:22px;font-weight:800}
@@ -66,34 +75,35 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"
 .tab.on{background:var(--panel2);color:var(--text)}
 .tab .cnt{color:var(--muted);font-size:11px;font-weight:400}
 .tab.on .cnt{color:var(--neon)}
-select,input[type=text],input[type=number]{background:#10151f;border:1px solid #2a3345;color:var(--text);border-radius:6px;height:34px;padding:0 10px;font:500 13px/1 inherit}
+select,input[type=text],input[type=number]{background:var(--input-bg);border:1px solid var(--input-border);color:var(--text);border-radius:6px;height:34px;padding:0 10px;font:500 13px/1 inherit}
 input[type=text]{flex:1;min-width:200px}
 .count{color:var(--muted);font-size:12px;margin-left:auto;white-space:nowrap}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:9px}
-.head{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.tick{font-size:14px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tick b{font-size:15px;letter-spacing:-.2px}
+.card{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:7px}
+.watch-corner{position:absolute;top:6px;right:6px}
+.watch-corner .rc-watch{margin:0}
+.head{display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding-right:50px;min-height:22px}
+.tick{font-size:13px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tick b{font-size:14px;letter-spacing:-.2px}
 .tick .sep{color:var(--muted)}
-.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
-.m{background:var(--panel2);border-radius:8px;padding:6px 4px;text-align:center;min-width:0}
+.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:4px}
+.m{background:var(--panel2);border-radius:8px;padding:5px 4px;text-align:center;min-width:0}
 .m .k{font-size:9px;color:var(--muted);letter-spacing:.3px;text-transform:uppercase}
-.m .val{font-weight:700;font-size:12px;overflow-wrap:break-word;line-height:1.15}
+.m .val{font-weight:700;font-size:11.5px;overflow-wrap:break-word;line-height:1.15}
 .gates{display:flex;gap:6px;border-top:1px solid var(--panel2);padding-top:8px}
 .event{color:var(--amber);font-size:11px;line-height:1.35}
 .event .when{color:var(--muted)}
-.prov{color:var(--muted);font-size:11px;line-height:1.35}
-.m .when{display:block;font-weight:400;font-size:9px;color:var(--muted)}
+.prov{color:var(--muted);font-size:10.5px;line-height:1.3}
 .gate{flex:1;background:var(--panel2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 0;cursor:pointer;font-weight:700;font-size:12px}
-.gate.on{color:var(--green);border-color:rgba(46,204,113,.4)}
+.gate.on{color:var(--green);border-color:color-mix(in srgb,var(--pos) 40%,transparent)}
 .gate.off{color:var(--red)}
 .gate.unk{color:var(--amber)}
 .tags{display:flex;flex-wrap:wrap;gap:6px;min-height:18px}
 .tags.empty{min-height:18px}
-.tag{font-size:10.5px;padding:2px 8px;border-radius:20px;background:var(--panel2);color:var(--muted)}
+.tag{font-size:10px;padding:2px 7px;border-radius:20px;background:var(--panel2);color:var(--muted)}
 .empty{color:var(--muted);padding:40px;text-align:center}
 footer{color:var(--muted);font-size:11px;margin-top:28px;border-top:1px solid var(--border);padding-top:14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
-.modal{display:none;position:fixed;inset:0;background:rgba(5,17,31,.7);z-index:50;align-items:center;justify-content:center}
+.modal{display:none;position:fixed;inset:0;background:var(--scrim);z-index:50;align-items:center;justify-content:center}
 .modal.open{display:flex}
 .modal .box{background:var(--panel);border:1px solid var(--border);border-radius:12px;width:min(560px,92vw);max-height:80vh;overflow:auto;padding:18px 20px}
 .modal h3{margin:0 0 4px;font-size:16px}
@@ -316,7 +326,6 @@ function usd(v){
   if(a >= 1e3) return s + "$" + (a/1e3).toFixed(1) + "K";
   return s + "$" + Math.round(a);
 }
-function fmtNum(v, d){ return (v == null) ? "N/A" : v.toFixed(d == null ? 2 : d); }
 function fmtPct(v){ return (v == null) ? "N/A" : (v*100).toFixed(1) + "%"; }
 // G6: the period Quality reads ("TTM to 2026-06-30", "FY to 2025-12-31"; ``long``: "trailing year to",
 // "fiscal year to"); "" when none is known.
@@ -326,9 +335,10 @@ function qualityAsOf(c, long){
   if(!end) return "";
   return (ttm ? (long ? "trailing year to " : "TTM to ") : (long ? "fiscal year to " : "FY to ")) + end;
 }
-function qualityWhen(c){
-  var w = qualityAsOf(c, false);
-  return w ? '<span class="when">' + rcEsc(w) + '</span>' : '';
+// The two halves of the Rule of 40, the one figure of it the gate button does not carry.
+function growthMargin(c){
+  if(c.rev_growth_ttm == null && c.fcf_margin == null) return "N/A";
+  return fmtPct(c.rev_growth_ttm) + " / " + fmtPct(c.fcf_margin);
 }
 function cell(k, v){ return '<div class="m"><div class="k">'+k+'</div><div class="val">'+v+'</div></div>'; }
 function cardHtml(c){
@@ -348,8 +358,6 @@ function cardHtml(c){
   var tags = themes.slice(0,3).map(function(x){ return '<span class="tag">'+rcEsc(x)+'</span>'; }).join("");
   var tagsRow = tags ? '<div class="tags">'+tags+'</div>' : '<div class="tags empty"></div>';
   var indexBadges = (c.index || []).map(function(i){ return '<span class="badge b-index">'+rcEsc(i)+'</span>'; }).join("");
-  var r40 = (c.ro40 == null) ? "N/A"
-          : fmtNum(c.ro40, 1) + " (" + fmtPct(c.rev_growth_ttm) + " / " + fmtPct(c.fcf_margin) + ")";
   // #386 F5: the corporate-event flag, a display-only note under the metrics (the item codes of the filer's 8-Ks).
   var ev = c.corporate_event || null;
   var evItems = (ev && ev.items) || [];
@@ -366,21 +374,22 @@ function cardHtml(c){
       + (st.filed ? ' filed ' + rcEsc(st.filed) : '') + (st.filed && st.read ? ',' : '')
       + (st.read ? ' read ' + rcEsc(st.read) : '') + '</div>'
     : "";
+  var watch = rcWatchButtons(c.ticker);
   return '<div class="card">'
+    + (watch ? '<div class="watch-corner">' + watch + '</div>' : '')
     + '<div class="head">'
     + (sector ? '<span class="badge b-sector">'+sector+'</span>' : '')
     + indexBadges + distTag + staleTag + '</div>'
     + '<div class="tick"><b>' + t + '</b>'
     + (name ? '<span class="sep"> • </span>'+name : '') + '</div>'
-    + rcWatchRow(c.ticker)
+    // avo, 14 Nov 2026 12:07 Amsterdam ("Yap"): four cells, not seven. The Rule of 40, Quality and Momentum
+    // scores were a second printing of the three gate buttons right below, which carry the same figure plus the
+    // pass / fail / unknown colour and open the rules. The Rule of 40's basis and Quality's "as of" year were
+    // likewise already in those windows, so nothing on the card is lost; the two halves of the Rule of 40 were
+    // only here, and keep a cell of their own.
     + '<div class="metrics">'
     + cell("Period", rcEsc(c.period))
-    + cell("Basis", rcEsc(c.ro40_basis))
-    + cell("Rule of 40", r40)
-    // Review F1, G6: ROIC, gross margin and net debt read the trailing year when the quarters give it ("TTM to"),
-    // else the anchor fiscal year ("FY to"). A payload written before G6 has no basis: its figures are the year's.
-    + cell("Quality", rcEsc(c.quality_score) + qualityWhen(c))
-    + cell("Momentum", rcEsc(c.momentum_score))
+    + cell("Growth / FCF margin", growthMargin(c))
     + cell("Price", usd(c.price))
     + cell("Mkt cap", usd(c.market_cap))
     + '</div>'
@@ -502,6 +511,7 @@ function start(){
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Fundamental Analysis</title>
+<script>{THEME_JS}</script><style>{THEME_CSS}</style>
 <style>{CSS}</style>
 {FILTERS_CSS}
 </head>
