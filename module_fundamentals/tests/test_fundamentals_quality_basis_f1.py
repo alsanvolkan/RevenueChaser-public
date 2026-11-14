@@ -5,7 +5,7 @@ those three figures came from. The Quality rules window names it.
 
 The card's Quality cell named it too until 14 Nov 2026, when avo cut the face from seven cells to four ("Yap",
 12:07 Amsterdam): the cell repeated the Quality gate button beside it. F1's point is unchanged -- a reader can
-still tell which year the three figures come from -- but it is now the window that says so, one tap away.
+still tell which year the three figures come from -- but it is now the window that says so, one tap away."""
 from __future__ import annotations
 
 import json
