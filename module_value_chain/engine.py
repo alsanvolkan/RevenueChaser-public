@@ -673,6 +673,10 @@ def edge_index(edges: list[dict]) -> dict[str, dict]:
     return {"by_src": _norm(edges), "by_dst": by_dst}
 
 
+# Seen from the focal company, an incoming edge's relation is the other way round (#405).
+_INVERSE = {"supplier": "customer", "customer": "supplier"}
+
+
 def focal_graph(edges: list[dict], ticker: str, depth: int = 2,
                 max_hop2: int = config.MAX_HOP2, index: dict | None = None) -> dict:
     """Upstream/downstream edges for ``ticker`` plus one more hop on resolved names.
@@ -690,9 +694,15 @@ def focal_graph(edges: list[dict], ticker: str, depth: int = 2,
     def _add(e, hop, incoming=False):
         # ``share_pct``: the share of the filer's (``src``'s) sales or purchases a concentration sentence states
         # (#387 D7); None on a keyword edge and on an edge stored before the column.
+        # ``relation`` stays the filing's own statement, which the page's sentence quotes ("NXPI's filing names
+        # AAPL as a possible customer"). ``focal_relation`` is the same relationship seen from the focal company,
+        # which is what the legend defines and the chip and colour must read (#405): on an incoming edge the
+        # filer's customer is the focal company's supplier.
         links.append({"src": e["src"], "dst": e.get("dst_ticker") or e["dst_name"],
                       "dst_ticker": e.get("dst_ticker") or "",
-                      "relation": e["relation"], "snippet": e.get("snippet") or "",
+                      "relation": e["relation"],
+                      "focal_relation": _INVERSE.get(e["relation"], e["relation"]) if incoming else e["relation"],
+                      "snippet": e.get("snippet") or "",
                       "share_pct": e.get("share_pct"), "hop": hop, "incoming": incoming,
                       # #410: the edge's source; absent on an edge stored before the column.
                       **({"source": e["source"]} if e.get("source") else {})})
