@@ -305,14 +305,20 @@ def test_a_hostile_ticker_is_escaped_on_the_card(tmp_path):
 
 # ── F3: the card face ─────────────────────────────────────────────────────────
 
-def test_the_card_face_carries_the_period_basis_growth_margin_price_and_cap(tmp_path):
+def test_the_card_face_carries_the_period_growth_margin_price_and_cap(tmp_path):
+    """avo, 14 Nov 2026 12:07 Amsterdam: four cells, not seven. The Rule of 40 / Quality / Momentum scores and
+    the Rule-of-40 basis left the face -- the three gate buttons below carry the same scores with their pass /
+    fail colour, and the basis is on the Rule of 40 rule's own label in its window."""
     p = _known_payload()
     out = run_board_js(render_fundamental_dashboard(p),
                        "console.log(JSON.stringify(_els['grid'].innerHTML));", tmp_path)
-    assert "FY2024 vs FY2023" in out          # the period
-    assert "Basis" in out and "FY" in out      # the Rule-of-40 basis
-    assert "30.0%" in out and "20.0%" in out   # growth / FCF margin
+    assert "FY2024 vs FY2023" in out           # the period
+    assert "30.0%" in out and "20.0%" in out   # growth / FCF margin, the one figure the buttons lack
     assert "$50" in out and "$1.00B" in out    # price / market cap
+    assert "Basis" not in out, "the Rule-of-40 basis belongs to its rule window now"
+    for gone in (">Rule of 40<", ">Quality<", ">Momentum<"):
+        assert gone not in out, f"{gone} is a second printing of the gate button"
+    assert "Ro40 50" in out and "Q 3/3" in out and "M 3/3" in out   # ... which still carries it
 
 
 def test_the_page_has_none_of_the_retired_words():

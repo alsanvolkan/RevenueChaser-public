@@ -86,7 +86,7 @@ input[type=text]{flex:1;min-width:200px}
 .tick{font-size:13px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tick b{font-size:14px;letter-spacing:-.2px}
 .tick .sep{color:var(--muted)}
-.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:4px}
 .m{background:var(--panel2);border-radius:8px;padding:5px 4px;text-align:center;min-width:0}
 .m .k{font-size:9px;color:var(--muted);letter-spacing:.3px;text-transform:uppercase}
 .m .val{font-weight:700;font-size:11.5px;overflow-wrap:break-word;line-height:1.15}
@@ -94,7 +94,6 @@ input[type=text]{flex:1;min-width:200px}
 .event{color:var(--amber);font-size:11px;line-height:1.35}
 .event .when{color:var(--muted)}
 .prov{color:var(--muted);font-size:10.5px;line-height:1.3}
-.m .when{display:block;font-weight:400;font-size:9px;color:var(--muted)}
 .gate{flex:1;background:var(--panel2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 0;cursor:pointer;font-weight:700;font-size:12px}
 .gate.on{color:var(--green);border-color:color-mix(in srgb,var(--pos) 40%,transparent)}
 .gate.off{color:var(--red)}
@@ -327,7 +326,6 @@ function usd(v){
   if(a >= 1e3) return s + "$" + (a/1e3).toFixed(1) + "K";
   return s + "$" + Math.round(a);
 }
-function fmtNum(v, d){ return (v == null) ? "N/A" : v.toFixed(d == null ? 2 : d); }
 function fmtPct(v){ return (v == null) ? "N/A" : (v*100).toFixed(1) + "%"; }
 // G6: the period Quality reads ("TTM to 2026-06-30", "FY to 2025-12-31"; ``long``: "trailing year to",
 // "fiscal year to"); "" when none is known.
@@ -337,9 +335,10 @@ function qualityAsOf(c, long){
   if(!end) return "";
   return (ttm ? (long ? "trailing year to " : "TTM to ") : (long ? "fiscal year to " : "FY to ")) + end;
 }
-function qualityWhen(c){
-  var w = qualityAsOf(c, false);
-  return w ? '<span class="when">' + rcEsc(w) + '</span>' : '';
+// The two halves of the Rule of 40, the one figure of it the gate button does not carry.
+function growthMargin(c){
+  if(c.rev_growth_ttm == null && c.fcf_margin == null) return "N/A";
+  return fmtPct(c.rev_growth_ttm) + " / " + fmtPct(c.fcf_margin);
 }
 function cell(k, v){ return '<div class="m"><div class="k">'+k+'</div><div class="val">'+v+'</div></div>'; }
 function cardHtml(c){
@@ -359,8 +358,6 @@ function cardHtml(c){
   var tags = themes.slice(0,3).map(function(x){ return '<span class="tag">'+rcEsc(x)+'</span>'; }).join("");
   var tagsRow = tags ? '<div class="tags">'+tags+'</div>' : '<div class="tags empty"></div>';
   var indexBadges = (c.index || []).map(function(i){ return '<span class="badge b-index">'+rcEsc(i)+'</span>'; }).join("");
-  var r40 = (c.ro40 == null) ? "N/A"
-          : fmtNum(c.ro40, 1) + " (" + fmtPct(c.rev_growth_ttm) + " / " + fmtPct(c.fcf_margin) + ")";
   // #386 F5: the corporate-event flag, a display-only note under the metrics (the item codes of the filer's 8-Ks).
   var ev = c.corporate_event || null;
   var evItems = (ev && ev.items) || [];
@@ -385,14 +382,14 @@ function cardHtml(c){
     + indexBadges + distTag + staleTag + '</div>'
     + '<div class="tick"><b>' + t + '</b>'
     + (name ? '<span class="sep"> • </span>'+name : '') + '</div>'
+    // avo, 14 Nov 2026 12:07 Amsterdam ("Yap"): four cells, not seven. The Rule of 40, Quality and Momentum
+    // scores were a second printing of the three gate buttons right below, which carry the same figure plus the
+    // pass / fail / unknown colour and open the rules. The Rule of 40's basis and Quality's "as of" year were
+    // likewise already in those windows, so nothing on the card is lost; the two halves of the Rule of 40 were
+    // only here, and keep a cell of their own.
     + '<div class="metrics">'
     + cell("Period", rcEsc(c.period))
-    + cell("Basis", rcEsc(c.ro40_basis))
-    + cell("Rule of 40", r40)
-    // Review F1, G6: ROIC, gross margin and net debt read the trailing year when the quarters give it ("TTM to"),
-    // else the anchor fiscal year ("FY to"). A payload written before G6 has no basis: its figures are the year's.
-    + cell("Quality", rcEsc(c.quality_score) + qualityWhen(c))
-    + cell("Momentum", rcEsc(c.momentum_score))
+    + cell("Growth / FCF margin", growthMargin(c))
     + cell("Price", usd(c.price))
     + cell("Mkt cap", usd(c.market_cap))
     + '</div>'
