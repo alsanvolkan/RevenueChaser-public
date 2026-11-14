@@ -2010,12 +2010,14 @@ accession. A filing that legitimately yields **no** note rows (no inline XBRL: 0
 does not read as stale on every run, which comparing expected rows against stored rows would have done. The
 dataset's check reports rows per `rules_version`, so a half-migrated table is visible rather than inferred.
 
-**Which cutter version.** Sections are cut by `rcdata/sec_sections.py` at `ours-1` and notes read at `notes-1`,
-and every row carries the version that wrote it. `ours-2` (#755, #756) lifts the 200,000-character cap on the
-business section, fixes the five item defects, and carries its own 40-F rule: six start titles and ten stop
-titles instead of one each, a contents test and a body minimum in place of the cap, and a label (ok / overrun / missing) read
-through `cut_aif_business_q`. When it lands, the version constant moves to it and the rule above re-cuts
-every company in one build, with no re-fetch.
+**Which cutter version.** Sections are cut by `rcdata/sec_sections.py` at `ours-2` and notes read at `notes-1`,
+and every row carries the version that wrote it. `ours-2` (#755, #756, pinned here by #845) lifts the
+200,000-character cap on the business section — so no row is labelled `capped` — fixes the five item defects, and
+carries its own 40-F rule: six start titles and ten stop titles instead of one each, a contents test and a body
+minimum in place of the cap, and a label (ok / overrun / missing) read through `cut_aif_business_q`. It was pinned
+before the first full cut, because moving the version re-cuts every company in one build and that pass is paid
+once. The Value Chain board (`module_value_chain/splitter.py`) and `filing_item` stay on `ours-1`: their tables
+carry no version column, so each moves on its own change.
 
 **Needs.** `sec.whole`, `sec.business`, `sec.proxy` and `sec.note`, each with its own reader and `ask_required`
 (the text is gigabytes: nothing is answered unless a company is named). The three section needs share one table
