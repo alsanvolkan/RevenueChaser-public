@@ -229,16 +229,28 @@ def test_a_start_whose_body_is_shorter_than_the_body_minimum_is_passed_over_for_
     assert len(item) > sec_sections._BODY_MIN
 
 
-# ── and the boards are left exactly where they were ────────────────────────────────────────────────────────────
-def test_the_boards_stay_on_ours_1_and_their_text_does_not_move():
+# ── and the boards read one named version, never "whatever the newest rule is" ─────────────────────────────────
+def test_the_boards_read_their_pin_and_nothing_else():
     """The reason ``ours-2`` is a version and not a fix in place. ``module_value_chain/edgar_text.py`` and
     ``rcdata/build/fundamentals/filings.py`` cut live text with the board's wrapper and store what they cut, with
     no version column to tell two rules' rows apart -- and the Relatedness profiles built on that text are a paid
-    model run to rebuild. So this issue must not change a single answer the board gets.
+    model run to rebuild. So a new version must not reach a board by existing; it reaches one by a change of this
+    pin, with its own re-slice.
+
+    #755 and the issues after it therefore changed no answer the board got. #847 is that change of the pin, so
+    what is asserted here is the invariant and not the value: the wrapper returns the pinned version's cut
+    exactly, whatever the pin is. The pin's current value is
+    ``test_sec_sections.py::test_the_board_is_pinned_to_ours_2_and_not_to_the_default``.
     """
-    assert splitter.VERSION == OURS_1
+    assert splitter.VERSION in sec_sections.VERSIONS
+    assert splitter.VERSION == OURS_2, "#847 moved the pin: this file's version is what the boards cut with now"
     for name, text, form in CASES:
-        assert splitter.slice_item(text, form) == sec_sections.cut_item(text, form, version=OURS_1), name
+        assert splitter.slice_item(text, form) == sec_sections.cut_item(
+            text, form, version=splitter.VERSION), name
+    # And the two versions really do answer differently on this file's cases, so the line above is not comparing
+    # one rule with itself: ours-2 exists because it cuts some of these differently.
+    assert any(sec_sections.cut_item(text, form, version=OURS_1)
+               != sec_sections.cut_item(text, form, version=OURS_2) for _, text, form in CASES)
 
 
 def test_ours_2_is_declared_and_reachable_like_any_other_version():
