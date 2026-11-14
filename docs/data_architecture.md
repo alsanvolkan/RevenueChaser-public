@@ -1785,8 +1785,19 @@ uses (`LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligations` or `Lon
 else the current portion plus `ShortTermBorrowings` or `CommercialPaper`; a long-term line that includes its current
 portion plus the short-term line; no total without a long-term line; #239, measured on the real-data check of
 2026-10-28 in PR 249; convertible notes due within the year are the current line when no other current line is
-tagged, and are added beside a whole long-term line only when that line is below them, #264), and EPS
-(basic and diluted) is read too. An accession the SEC's XBRL API does not hold yet after the re-read is asked again
+tagged, and are added beside a whole long-term line only when that line is below them, #264). When the filer
+tags none of those lines at all, a second pass reads the balances it may tag instead (`SeniorNotes`,
+`ConvertibleDebt`, `SecuredDebt`, `NotesPayable`, `LongTermLoansPayable`, `LinesOfCreditCurrent` and their
+neighbours, `rcdata/build/fundamentals/facts.py` `FALLBACK_*`), in the same three slots. One line of each ladder
+is taken, the largest positive one and never a sum (which of these tags overlap is not readable from the facts); a
+zero line is passed over for a positive one of the same ladder, because a `total_debt` of 0 reads as debt-free
+while a NULL does not, but it keeps its slot when a positive current line stands beside it, which is the filer
+saying nothing is due beyond the year (OKTA's `ConvertibleDebtNoncurrent` 0 next to 350 m of convertible notes);
+a second-pass total of 0 is never served; a current line alone is still not the whole; and the pass runs only where the first one gives nothing, so no total that exists
+today moves. Measured over the board's 2,131 anchor years on 13 Nov 2026: 157 years gain a total, 0 change value
+and 0 are lost (#737). A tag that is a schedule or a contra item
+(`FinanceLeaseLiabilityUndiscountedExcessAmount`, `DebtInstrumentCarryingAmount`, `LongTermDebtMaturities...`) is
+not read, although edgartools' mapping files it under its debt lines. EPS (basic and diluted) is read too. An accession the SEC's XBRL API does not hold yet after the re-read is asked again
 by the next day's run (the run's note says `pending`), so a statement reaches the served table on its filing day or
 the day after, never months late (the Fundamentals review's F3).
 

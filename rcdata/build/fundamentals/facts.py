@@ -23,7 +23,10 @@ today. What this layer adds:
   ``DebtCurrent`` nor ``LongTermDebtCurrent`` is tagged, and are added to a whole long-term line only when that line
   is below them, so it cannot hold them (#264: NVIDIA's restated 0 for 31 Jan 2016). A line of credit is not
   added: the filers that tag one carry it inside their long-term line. With no long-term line tagged there is no
-  total: a current line alone is not the whole. Measured on the real-data check of 2026-10-28 (PR 249): the earlier
+  total: a current line alone is not the whole. **When none of those lines is tagged at all** (#737), a second pass
+  reads the balances a filer may tag instead (``FALLBACK_*``, ``_debt_lines``): a whole or noncurrent line of its
+  own ladder, plus a current and a short-term line. The second pass never runs for a company the first one answers,
+  so no total that exists today moves. Measured on the real-data check of 2026-10-28 (PR 249): the earlier
   three-term sum served HEI 3.4 million instead of 2.17 billion (its long-term line is
   ``LongTermDebtAndCapitalLeaseObligations``), no total for ORCL (``LongTermNotesPayable`` + ``DebtCurrent``), AAPL
   without its 7.98 billion of commercial paper, and JPM its 72 billion of short-term borrowings alone (its 461
@@ -58,6 +61,22 @@ COMMERCIAL_PAPER = "CommercialPaper"
 WHOLE_LONG_TERM_DEBT = "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities"
 DEBT_LINES = LONG_TERM_DEBT + ("lt_debt_total", "debt_current", "lt_debt_current", "short_term_borrowings",
                                "convertible_debt_current")
+# #737: the debt balances read ONLY when the lines above give no total at all. Each tuple is a strict priority, not
+# a sum: two of these tags can describe one borrowing (``SeniorNotes`` beside ``SecuredDebt``), and which pairs
+# overlap is not countable from the facts. One line of a ladder is taken, the LARGEST positive one (``_best_of``),
+# so the order below is only the grouping, never a preference. A filer that tags several genuinely different
+# borrowings from one ladder is therefore still understated: that is a known gap, measured on 13 Nov 2026 and
+# written up in the PR, not something this rule claims to solve.
+FALLBACK_WHOLE_DEBT = ("debt_and_lease_total", "convertible_debt", "convertible_notes_payable", "senior_notes",
+                       "secured_debt", "notes_payable", "line_of_credit", "other_lt_debt")
+FALLBACK_LONG_TERM_DEBT = ("convertible_debt_noncurrent", "senior_notes_noncurrent", "loans_payable_noncurrent",
+                           "secured_debt_noncurrent", "bank_loans_noncurrent", "line_of_credit_noncurrent",
+                           "other_lt_debt_noncurrent")
+FALLBACK_CURRENT_DEBT = ("line_of_credit_current", "loans_payable_current", "senior_notes_current",
+                         "notes_payable_current")
+FALLBACK_SHORT_TERM_DEBT = ("short_term_bank_loans",)
+FALLBACK_DEBT_LINES = (FALLBACK_WHOLE_DEBT + FALLBACK_LONG_TERM_DEBT + FALLBACK_CURRENT_DEBT
+                       + FALLBACK_SHORT_TERM_DEBT)
 EPS_CONCEPTS = {
     "eps_basic": (["EarningsPerShareBasic", "EarningsPerShareBasicAndDiluted"], "USD/shares"),
     "eps_diluted": (["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"], "USD/shares"),
@@ -233,22 +252,93 @@ def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) ->
     Every line comes from the one balance sheet dated ``balance_end`` (the record's ``total_assets`` end; the newest
     debt line's end when it has none). An annual record is keyed by calendar year and each field keeps its own end,
     so a filer that moved its year end holds two balance dates in one record; a line of the other date is left out,
-    as ``sec_edgar._fill_gross_profit`` leaves out a cost of another period (the Opus review's M1)."""
-    lines = {f: r for f, r in out.items() if f in DEBT_LINES}
+    as ``sec_edgar._fill_gross_profit`` leaves out a cost of another period (the Opus review's M1).
+
+    Two passes (#737). The first reads the lines of #239 and is unchanged, so **a company that has a total today
+    keeps exactly the value it has today**: the second pass runs only when the first returns nothing. The second
+    adds the fallback ladders (``FALLBACK_*``), the balances a filer may tag instead of ``LongTermDebtNoncurrent``
+    and its neighbours. Measured on the stored companyfacts, 12 Nov 2026 (claude-coordinator
+    ``notes/revenuechaser/2026-11-12_1400_fundamentals-tags-and-ifrs-measurement.md``): 654 scored fiscal years
+    carry no total, and 104 of them carry one of these balances. The rule that a current line alone is not the
+    whole is **kept** in both passes, so a year whose only fallback line is a current one still has no total.
+    """
+    first = _lines_on_one_sheet(out, index, balance_end, DEBT_LINES, fallback=False)
+    if first:
+        return first
+    second = _lines_on_one_sheet(out, index, balance_end, DEBT_LINES + FALLBACK_DEBT_LINES, fallback=True)
+    # A second-pass total of 0 would say "debt-free", which these tags cannot support: no line of the first pass
+    # was tagged, so a zero here is the absence of a reading, not a filer's own zero. The total stays unknown.
+    return second if sum(r["value"] for r in second) > 0 else []
+
+
+def _best_of(lines: dict[str, dict], fields: tuple[str, ...]) -> dict | None:
+    """The largest positive line of a fallback ladder, or None (#737, the real-data check of 13 Nov 2026).
+
+    **Largest, not first.** The ladder's own order says nothing about size, and a filer that tags several of these
+    is served only one of them, so taking the first understated 14 of the 157 companies the fallback fills: BABA
+    tags ``SeniorLongTermNotes`` 17.0 bn, ``ConvertibleDebtNoncurrent`` 8.1 bn and ``LongTermLoansFromBank`` 6.9 bn
+    on 31 Mar 2026, and the first of those in the ladder is the 8.1 bn one. The largest is never a double count:
+    whichever two of these tags overlap, the larger is the more complete statement of the same borrowing.
+
+    **A zero line is skipped.** ``total_debt = 0`` is read downstream as debt-free, which a NULL is not, and a tag
+    carried at zero said nothing: 26 of the 157 gains were zero totals, MHO's off a ``LineOfCredit`` of 0 while it
+    carried ``OtherLongTermDebt`` 52 m. This applies to the fallback ladders only — a zero in the lines of #239 is
+    a filer's own statement and still counts (NVIDIA's restated ``LongTermDebt`` of 0, #264). Nor is it absolute
+    in the fallback: see ``_zero_long_term`` for the zero that does carry a meaning.
+    """
+    found = [lines[f] for f in fields if f in lines and lines[f]["value"] > 0]
+    return max(found, key=lambda r: r["value"]) if found else None
+
+
+def _zero_long_term(lines: dict[str, dict], current: list[dict]) -> dict | None:
+    """A fallback long-term or whole line the filer tagged at exactly **zero**, but only when a positive current or
+    short-term line stands beside it (#737, the second real-data check of 13 Nov 2026).
+
+    ``_best_of`` drops a zero because a zero line usually hides a larger one: MHO tags ``LineOfCredit`` 0 next to
+    ``OtherLongTermDebt`` 52 m, and serving 0 would call it debt-free. Dropped on its own, though, the zero took
+    five real totals back to NULL: OKTA tags ``ConvertibleDebtNoncurrent`` 0 and ``ConvertibleNotesPayableCurrent``
+    350.0 m, and there the zero is the filer's own statement that nothing is due beyond the year, so the current
+    line is the whole debt (QTWO, ASAN, CRCL and OCC are the same shape). The two are told apart by what stands
+    beside the zero: a positive current line makes the structure a statement, nothing beside it leaves the total
+    unknown rather than zero.
+    """
+    if not any(r["value"] > 0 for r in current):
+        return None
+    return next((lines[f] for f in FALLBACK_WHOLE_DEBT + FALLBACK_LONG_TERM_DEBT
+                 if f in lines and lines[f]["value"] == 0), None)
+
+
+def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | None, fields: tuple[str, ...],
+                        fallback: bool) -> list[dict]:
+    """One pass of ``_debt_lines`` over ``fields``; ``fallback`` adds the #737 ladders to each of the three slots."""
+    lines = {f: r for f, r in out.items() if f in fields}
     if balance_end is None and lines:
         balance_end = max(r["period_end"] for r in lines.values()).isoformat()
     lines = {f: r for f, r in lines.items() if r["period_end"] == _day(balance_end)}
-    short = lines.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, balance_end)
+    short = (lines.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, balance_end)
+             or (_best_of(lines, FALLBACK_SHORT_TERM_DEBT) if fallback else None))
     short = [short] if short else []
-    long_term = next((lines[f] for f in LONG_TERM_DEBT if f in lines), None)
     convertible = lines.get("convertible_debt_current")
-    if long_term is not None:
-        # #264: convertible notes due within the year are the current line only when no other current line is
-        # tagged (DebtCurrent and LongTermDebtCurrent hold them when they are), so they are never read twice.
-        current_line = lines.get("lt_debt_current") or convertible
-        current = [lines["debt_current"]] if "debt_current" in lines else ([current_line] if current_line else []) + short
-        return [long_term] + current
+    # #264: convertible notes due within the year are the current line only when no other current line is tagged
+    # (DebtCurrent and LongTermDebtCurrent hold them when they are), so they are never read twice.
+    current_line = (lines.get("lt_debt_current") or convertible
+                    or (_best_of(lines, FALLBACK_CURRENT_DEBT) if fallback else None))
+    # DebtCurrent is the short-term borrowings and the current portion together, so nothing is added beside it.
+    current = ([lines["debt_current"]] if "debt_current" in lines
+               else ([current_line] if current_line else []) + short)
+    long_term = next((lines[f] for f in LONG_TERM_DEBT if f in lines), None)
     whole = lines.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, balance_end)
+    if fallback and long_term is None and whole is None:
+        # The fallback asks for a WHOLE line before a noncurrent one, the other way round from the lines above.
+        # There, the current portion has its own standard tag (``DebtCurrent``, ``LongTermDebtCurrent``) and a
+        # noncurrent line plus that tag is the more exact pair. Here it has not: a filer that tags
+        # ``ConvertibleDebt`` 300 and ``ConvertibleDebtNoncurrent`` 280 and no current tag at all states its whole
+        # debt only in the first, and reading the second would quietly drop the 20 due within the year.
+        whole = _best_of(lines, FALLBACK_WHOLE_DEBT)
+        if whole is None:
+            long_term = _best_of(lines, FALLBACK_LONG_TERM_DEBT) or _zero_long_term(lines, current)
+    if long_term is not None:
+        return [long_term] + current
     if not whole:
         return []
     # A whole long-term line holds its current portion, so it is never below the convertible notes due within the
