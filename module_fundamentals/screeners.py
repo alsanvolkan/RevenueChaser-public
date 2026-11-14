@@ -74,9 +74,24 @@ def evaluate_rule_of_40(m: dict) -> dict:
 INFERRED_DEBT_NOTE = "debt not tagged, no interest: counted 0"
 
 
+# #737 (avo, 14 Nov 2026 11:06 Amsterdam, option "A: Kaldı say"): what the leverage rule says about a company
+# that earns nothing and still owes money. The reason rides on the label, next to the threshold, so the Q modal
+# shows why the rule failed with no figure beside it -- there is no ratio to show, which is the point.
+LOSS_WITH_NET_DEBT_NOTE = "no EBITDA to service net debt"
+
+
 def _leverage_rule(nde, net_cash, debt_basis=None) -> dict:
-    """Net Debt / EBITDA < 3×. Review N1: a firm with more cash than debt passes even when EBITDA ≤ 0 leaves the
-    ratio undefined (shown as "Net cash"); net debt with EBITDA ≤ 0 stays unknown.
+    """Net Debt / EBITDA < 3×, as three cases once the ratio itself is undefined (EBITDA known and ≤ 0).
+
+    Review N1: more cash than debt **passes** even then (shown as "Net cash") -- a firm that owes nothing net is
+    not over-levered, whatever it earns. #737, avo's "A: Kaldı say" (14 Nov 2026): net debt in a loss year now
+    **fails**, where it used to stay unknown -- a company with no EBITDA to service its debt is levered, and
+    leaving it unknown only kept it out of the count. EBITDA that is not reported at all is still a missing
+    input and stays unknown.
+
+    The three cases are read off ``net_cash``, which ``pipeline._quality_of`` sets only when total debt, liquid
+    assets **and** EBITDA are all known: True = net cash, False = net debt, None = an input is missing. With the
+    ratio undefined (``nde is None``) that is exactly "EBITDA known and ≤ 0", which is what this rule needs.
 
     ``debt_basis`` is #737's: ``inferred_none`` means the filer tagged no debt line and reported no interest, so
     the board read its total debt as 0 (``module_fundamentals.debt``). The label then says so. A filed total,
@@ -86,6 +101,9 @@ def _leverage_rule(nde, net_cash, debt_basis=None) -> dict:
         label += f" ({INFERRED_DEBT_NOTE})"
     if nde is None and net_cash is True:
         return _rule("net_debt_ebitda", label, "text", True, "Net cash", "< 3.0×")
+    if nde is None and net_cash is False:
+        return _rule("net_debt_ebitda", f"{label} ({LOSS_WITH_NET_DEBT_NOTE})", "text", False, "Net debt",
+                     "< 3.0×")
     return _rule("net_debt_ebitda", label, "ratio",
                  tri.rule((nde,), lambda n: n < config.ND_EBITDA_MAX), nde, "< 3.0×")
 
