@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from RevenueChaser.module_value_chain import config, splitter
+from RevenueChaser.rcdata import sec_sections
 
 PROSE = "We make widgets for customers across many markets and we sell them through distributors worldwide.\n" * 60
 TOC_10K = (" Table of Contents \n PART I \n Item 1. \n Business \n 3 \n Item 1A. \n Risk Factors \n 12 \n Item 2. \n"
@@ -67,7 +68,25 @@ def test_contents_entry_followed_by_page_number_is_not_the_body():
 
 
 def test_item_4_longer_than_the_cap_is_capped_and_ok():
-    # BCH: Item 4 is 404k and names "Item 4A" in a sentence early on; the slice is capped at the body heading.
+    """BCH: Item 4 is 404k and names "Item 4A" in a sentence early on. Kept under its ``ours-1`` name, which the
+    second half still asserts by name.
+
+    The shape this case is here for is the quoted cross-reference, and both versions get that right: the slice
+    starts at the body heading and does not end at the sentence. What they do with the length differs, and that
+    is the version's business, not this file's -- ``ours-1`` truncates at :data:`MAX_ITEM_CHARS` and says
+    ``capped``, ``ours-2`` hands the whole section over (#847). Both are asserted, ``ours-1`` by name, because
+    the rows already in the store were cut by it.
+    """
     big = PROSE * 2 + " as noted in “Item 4A. Unresolved Staff Comments” below.\n" + PROSE * 38
-    item, _ = _cut(TOC_20F + " Item 4 Information on the Company \n" + big + " Item 4A Unresolved Staff Comments \n", "20-F")
-    assert len(item) == config.MAX_ITEM_CHARS and item.lstrip().startswith("We make widgets")
+    text = TOC_20F + " Item 4 Information on the Company \n" + big + " Item 4A Unresolved Staff Comments \n"
+    item, quality = _cut(text, "20-F")
+    assert item.lstrip().startswith("We make widgets")
+    # Once: the quoted cross-reference inside the section. The real heading after it is the stop, so it is out.
+    assert item.count("Unresolved Staff Comments") == 1
+    if sec_sections.rule(splitter.VERSION).caps:
+        assert quality == "capped" and len(item) == config.MAX_ITEM_CHARS
+    else:
+        assert quality == "ok" and len(item) > config.MAX_ITEM_CHARS
+
+    capped, q1 = sec_sections.cut_item(text, "20-F", version=sec_sections.OURS_1)
+    assert q1 == "capped" and capped is not None and len(capped) == config.MAX_ITEM_CHARS

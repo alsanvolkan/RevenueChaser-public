@@ -1,12 +1,15 @@
 """#400 10-K package WP3: the 20-F and 40-F rules of the 10-K reading report (section 4, A6-A7, 8 Nov 2026).
 
 20-F: Item 4.B's regulation chapter is dropped (PDD 87% and BABA 68% of 4.B are PRC regulation). 40-F: the business
-text of an Annual Information Form kept in the primary document (CNQ) is "General Development" to "Risk Factors",
-and an AIF filed as Exhibit 1 (RY ``dex1.htm``) is found.
+text of an Annual Information Form kept in the primary document (CNQ) was "General Development" to "Risk Factors"
+under ``ours-1``, and an AIF filed as Exhibit 1 (RY ``dex1.htm``) is found. ``ours-2`` (#756) reads the same
+document's block as the description chapter, because "general development of the business" is item 4 of NI 51-102
+and the part before it; since #847 that is the version the board pins.
 """
 from __future__ import annotations
 
 from RevenueChaser.module_value_chain import splitter
+from RevenueChaser.rcdata import sec_sections
 from RevenueChaser.rcdata.build.fundamentals import filings
 
 PROSE = "We make widgets for customers across many markets and we sell them through distributors worldwide.\n" * 60
@@ -34,10 +37,23 @@ AIF = (" ANNUAL INFORMATION FORM \n TABLE OF CONTENTS \n GENERAL DEVELOPMENT OF 
 
 
 def test_an_aif_in_the_40f_primary_document_gives_a_business_row():
+    """Where the block starts is the pinned version's answer, and the two versions differ here by design.
+
+    ``ours-1`` has one start title, "General Development of the Business", and one stop, "Risk Factors", so it
+    takes both chapters. ``ours-2``'s own 40-F rule (#756, read off 225 stored 40-F documents) treats "general
+    development of the business" as a **stop**: it is item 4 of NI 51-102 and a filing that carries it prints it
+    before the description, so the business block is the description. Since #847 the board pins ``ours-2``, so
+    this fixture's block is the second chapter alone. What the test is here for holds either way: a 40-F primary
+    document that carries an AIF gets a ``business`` row, and the risk chapter is not in it.
+    """
     html = "<html><body>" + "".join(f"<p>{line}</p>" for line in AIF.split("\n")) + "</body></html>"
     rows = {item: (text, quality) for item, text, quality in filings.document_sections(html, "40-F")}
     text, quality = rows["business"]
-    assert quality.startswith("ok") and text.count("We make widgets") == 120 and "risk text" not in text
+    assert quality.startswith("ok") and "risk text" not in text
+    chapters = 120 if splitter.VERSION == sec_sections.OURS_1 else 60   # ours-1 takes both, ours-2 the second
+    assert text.count("We make widgets") == chapters
+    assert sec_sections.cut_aif_business(
+        splitter.strip_html(html), version=sec_sections.OURS_1).count("We make widgets") == 120
     html = "<html><body><p>" + PROSE + "</p></body></html>"          # no AIF: the whole row only
     assert {item for item, _, _ in filings.document_sections(html, "40-F")} == {"whole"}
 

@@ -1,5 +1,11 @@
 """``sec/filings`` (build plan PR 12): the filing list and its 8-K items, the newest annual report and proxy texts with
-the splitter's quality flag (never ``ok`` at the 200,000-character cap), and the list's read date (F2)."""
+the splitter's quality flag, and the list's read date (F2).
+
+"Never ``ok`` at the 200,000-character cap" was this layer's invariant while Value Chain pinned ``ours-1``, which
+truncates there. Since #847 it pins ``ours-2``, which caps nowhere: the section arrives whole and ``ok``, and both
+the label and the ``filing_item`` CHECK follow ``filings.caps_text()``. The capped half is kept here, asked of a
+cut that caps, because the stored rows were written by one and the layer must keep serving them.
+"""
 from __future__ import annotations
 
 from datetime import date
@@ -35,9 +41,17 @@ def test_the_cap_is_the_splitters():
 
 
 @pytest.mark.parametrize("form", ["10-K", "20-F", "DEF 14A"])
-def test_quality_is_never_ok_at_the_cap(form):
+def test_a_whole_document_is_never_cut_or_capped_however_long_it_is(form):
     """The cap belongs to a slice, which runs away when its stop header is missed -- not to a whole document,
-    whose length is the filer's (avo, 5 Nov 2026: the document is kept uncut)."""
+    whose length is the filer's (avo, 5 Nov 2026: the document is kept uncut).
+
+    What the ``business`` slice does at the cap is the pinned version's answer, not this layer's, so it is asked
+    of :func:`filings.caps_text` rather than written in: see
+    ``test_the_business_slice_follows_the_pinned_version_at_the_cap``. A proxy has no slice at all, so the
+    pin cannot reach it -- which is a claim about this change and is asserted here for every form, because
+    nothing else in this file would notice the layer reading a cap the pinned cut does not have.
+    """
+    assert filings.caps_text() is False, "the board pins ours-2 since #847, which caps nowhere"
     html = fx.proxy(CAP + 50_000) if form == "DEF 14A" else fx.ten_k(CAP + 50_000)
     if form == "20-F":
         html = html.replace("Item 1. Business", "Item 4. Information on the Company").replace(
@@ -50,23 +64,60 @@ def test_quality_is_never_ok_at_the_cap(form):
     whole, whole_quality = by_item["whole"]
     assert len(whole) > CAP and whole_quality == "ok", "the document is kept whole"
     text, quality = by_item["business"]
-    assert len(text) == CAP and quality == "capped", "a slice still stops at the cap"
+    if filings.caps_text():
+        assert len(text) == CAP and quality == "capped", "a cutter that caps still stops its slice at the cap"
+    else:
+        assert len(text) > CAP and quality == "ok", "a cutter that caps nowhere hands the section over whole"
     small = {i: (x, q) for i, x, q in filings.document_sections(
         fx.ten_k(5_000), "10-K" if form == "20-F" else form)}
     assert small["business"][1] == "ok" and len(small["business"][0]) < CAP
 
 
-def test_the_served_table_refuses_ok_at_the_cap():
+def test_the_business_slice_follows_the_pinned_version_at_the_cap():
+    """``capped`` says "this is only part of the section", so only a cutter that truncates may say it (#847).
+
+    The pin is ``ours-2`` today and caps nowhere, so a long section is stored whole and ``ok``. The label is not
+    cosmetic: ``module_relatedness.locator.asks()`` sends a ``capped`` filing to a model to be re-cut, so a wrong
+    ``capped`` is paid work for nothing. Asked of both versions here, because the layer serves rows written by
+    ``ours-1`` as well.
+    """
+    from RevenueChaser.module_value_chain import splitter
+    from RevenueChaser.rcdata import sec_sections
+
+    assert filings.caps_text() is sec_sections.rule(splitter.VERSION).caps
+    assert filings.caps_text() is False, "the board pins ours-2 since #847"
+
+    html = fx.ten_k(CAP + 50_000)
+    _, text, quality = next(r for r in filings.document_sections(html, "10-K") if r[0] == "business")
+    assert quality == "ok" and len(text) > CAP
+    assert "suspect" not in quality, "S8 is the cap signal and ours-2 does not define it"
+
+    # And the same document under a cutter that does cap: the rows already in the store.
+    item, q1 = sec_sections.cut_item(splitter.strip_html(html), "10-K", version=sec_sections.OURS_1)
+    assert q1 == "capped" and item is not None and len(item) == CAP
+
+
+def test_the_served_table_refuses_ok_at_the_cap_only_while_the_cut_caps():
+    """The CHECK is the stored form of ``capped``, so it is there exactly while the pinned cut can produce one.
+
+    Under ``ours-2`` (#847) a correct section longer than the cap is ``ok``, and a CHECK refusing it would stop
+    the build on a right answer. ``filings.rules_state`` names ``caps_text``, so a live copy of the table is
+    rebuilt rather than kept with the CHECK the old pin asked for.
+    """
     con = duckdb.connect()
     tables.create(con, "filing_item")
 
     def insert(quality, chars):
         con.execute("INSERT INTO filing_item VALUES ('1', 'a', '10-K', NULL, NULL, NULL, 'document', 'business', "
                     f"'x', {chars}, '{quality}', 'sec/filings', NULL, NULL, NULL)")
-    with pytest.raises(duckdb.ConstraintException):
+    if filings.caps_text():
+        with pytest.raises(duckdb.ConstraintException):
+            insert("ok", CAP)
+    else:
         insert("ok", CAP)
     insert("capped", CAP)
     insert("ok", CAP - 1)
+    assert f"caps_text={filings.caps_text()}" in tables.FundamentalsTables().rules_state()
 
 
 def test_the_backfill_serves_the_filing_list_its_8k_items_and_the_two_documents(sec):
@@ -79,10 +130,16 @@ def test_the_backfill_serves_the_filing_list_its_8k_items_and_the_two_documents(
         ("2.02,9.01", "8-K", date(2025, 10, 29))]
     assert fx.q("SELECT items FROM sec_submissions WHERE accession = ?", fx.Q26) == [(None,)]
     docs = fx.q("SELECT item, form, accession, chars, quality FROM filing_item WHERE kind = 'document' ORDER BY item")
-    # ``whole`` is the document uncut (avo, 5 Nov 2026).
-    assert docs == [("business", "10-K", fx.K25, CAP, "capped"),
-                    ("proxy", "DEF 14A", fx.PROXY, 5_000, "ok"),
-                    ("whole", "10-K", fx.K25, 210_098, "ok")]
+    # ``whole`` is the document uncut (avo, 5 Nov 2026); ``business`` is cut by the version Value Chain pins, so
+    # its length and label are that version's (#847: ``ours-2`` caps nowhere, so the section is whole and ``ok``).
+    assert [d[:3] for d in docs] == [("business", "10-K", fx.K25),
+                                     ("proxy", "DEF 14A", fx.PROXY),
+                                     ("whole", "10-K", fx.K25)]
+    assert docs[1][3:] == (5_000, "ok") and docs[2][3:] == (210_098, "ok")
+    if filings.caps_text():
+        assert docs[0][3:] == (CAP, "capped")
+    else:
+        assert docs[0][4] == "ok" and CAP < docs[0][3] < 210_098
     assert fx.q("SELECT submissions_as_of FROM fundamental_company WHERE ticker = 'MSFT'") == [(date(2026, 10, 28),)]
     assert fx.q("SELECT submissions_as_of FROM fundamental_company WHERE ticker = 'HEI'") == [(None,)]  # never read
     calls = len(sec.requests)
