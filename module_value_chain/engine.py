@@ -403,7 +403,10 @@ def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] 
     for m in mentions_mod.find_mentions(text, filed):
         if aliases.issuer(m["dst_ticker"]) == me:
             continue
-        if m["dst_ticker"] in stated_dst and m["relation"] in ("supplier", "customer"):
+        # An ``other`` mention is display-only (no relation verb near the name), so it adds nothing once the
+        # filing states any relation for that company, and stored beside the stated row it drew the company
+        # twice on the board (#729). A ``competitor`` mention is a real second relation (#725) and stays.
+        if m["dst_ticker"] and m["dst_ticker"] in stated_dst and m["relation"] in ("supplier", "customer", "other"):
             continue
         out.append({"src": ticker, "dst_name": m["dst_name"], "dst_ticker": m["dst_ticker"],
                     "relation": m["relation"], "snippet": m["snippet"], "filed": m["filed"],
