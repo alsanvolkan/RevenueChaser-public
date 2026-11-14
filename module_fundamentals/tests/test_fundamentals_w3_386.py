@@ -318,7 +318,7 @@ def test_the_card_face_carries_the_period_growth_margin_price_and_cap(tmp_path):
     assert "Basis" not in out, "the Rule-of-40 basis belongs to its rule window now"
     for gone in (">Rule of 40<", ">Quality<", ">Momentum<"):
         assert gone not in out, f"{gone} is a second printing of the gate button"
-    assert "Ro40 50" in out and "Q 3/3" in out and "M 3/3" in out   # ... which still carries it
+    assert "Ro40 45" in out and "Q 3/3" in out and "M 3/3" in out   # ... which still carries it (_T3: 45.0)
 
 
 def test_the_page_has_none_of_the_retired_words():
