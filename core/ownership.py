@@ -203,6 +203,58 @@ def sec13f_filer_breaks(tickers) -> dict[str, list[dict]]:
     return out
 
 
+#: The investor types the 13F board offers, in the order of the owner's screenshot (12 Nov 2026), as Unusual Whales'
+#: institution tags (``docs/openapi.yaml`` ``Institution Tag``) with the board's label; ``all`` is every filer (#760).
+SEC13F_TYPES = (("all", "All"), ("activist", "Activist"), ("13d_activist", "13D Activist"), ("biotech", "Biotech"),
+                ("credit", "Credit"), ("energy", "Energy"), ("esg", "ESG"), ("event", "Event-driven"),
+                ("real_estate", "Real Estate"), ("small_cap", "Small Cap"), ("tiger_club", "Tiger Cub"),
+                ("value_investor", "Value"), ("public_companies", "Public Non-Finance"))
+
+
+def sec13f_type_holdings(tag: str) -> list[dict]:
+    """One investor type's ``sec13f_type_holdings`` rows (#760): per quarter its largest tickers with their ``share``
+    (%) of the type's portfolio and the rest as one row whose ``ticker`` is None, periods as ISO dates. A store that
+    cannot be read gives ``[]`` and a warning, never a failed board."""
+    from RevenueChaser.rcdata import read as rcread
+
+    try:
+        rows = rcread.type_holdings_13f([tag])
+    except Exception as exc:                      # noqa: BLE001 - an empty chart, never a failed board
+        logger.warning("13F investor-type holdings unreadable: %s", exc)
+        return []
+    return [{**r, "period": r["period"].isoformat(),
+             "snapshot_date": r["snapshot_date"].isoformat() if r.get("snapshot_date") else None} for r in rows]
+
+
+def sec13f_type_filers() -> dict[str, int]:
+    """``{tag: filers}``: each investor type's 13F filers in its newest stored quarter (#760), for the board's picker
+    to show how thin a type is (13 Nov 2026: 4 energy investors, no ESG one). ``{}`` when the store cannot be read."""
+    from RevenueChaser.rcdata import read as rcread
+
+    try:
+        rows = rcread.type_holdings_13f()
+    except Exception as exc:                      # noqa: BLE001 - no counts, never a failed board
+        logger.warning("13F investor-type counts unreadable: %s", exc)
+        return {}
+    newest: dict[str, tuple] = {}
+    for r in rows:
+        if r["tag"] not in newest or r["period"] > newest[r["tag"]][0]:
+            newest[r["tag"]] = (r["period"], int(r.get("type_filers") or 0))
+    return {tag: filers for tag, (_, filers) in newest.items()}
+
+
+def sec13f_open_periods() -> set[str]:
+    """The 13F report periods still arriving (their filing deadline not passed, nor their data set published), as
+    ISO dates; ``set()`` when the store cannot be read."""
+    from RevenueChaser.rcdata import read as rcread
+
+    try:
+        return {r["period"].isoformat() for r in rcread.periods_13f() if not r.get("complete")}
+    except Exception as exc:                      # noqa: BLE001 - no mark, never a failed board
+        logger.warning("13F periods unreadable, no still-arriving mark: %s", exc)
+        return set()
+
+
 SPLIT_LOOKBACK_DAYS = 10    # a quarter end on a weekend or a holiday still finds the session before it
 
 

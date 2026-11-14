@@ -63,8 +63,8 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
     "module_swing_potential": ("identity.universe", "prices.bars", "earnings.next"),
     "module_fundamentals": ("identity.universe", "prices.bars", "fundamentals.statements", "fundamentals.companies",
                             "fundamentals.filings", "earnings.next"),
-    "module_sec_13f": ("ownership.holders_13f", "ownership.periods_13f", "ownership.filer_breaks_13f",
-                       "prices.actions"),
+    "module_sec_13f": ("ownership.filer_breaks_13f", "ownership.holders_13f", "ownership.periods_13f",
+                       "ownership.type_holdings_13f", "prices.actions"),
     "module_leaps": ("options.daily",),
     # 11 Nov 2026: the calendar build reads the builder's economic calendar, not raw.economic_calendar.
     "module_news": ("market.economic_calendar",),

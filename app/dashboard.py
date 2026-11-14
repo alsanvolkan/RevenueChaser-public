@@ -2080,6 +2080,20 @@ def api_sec13f(ticker: str):
     return jsonify({"ok": True, "ticker": t, "fig": build_chart_fig(t, periods, enrich)})
 
 
+@app.route("/api/sec_13f/types/<tag>")
+def api_sec13f_types(tag: str):
+    """Plotly figure and note for one investor type's top 13F holdings per quarter (#760). 404 for a type the board
+    does not offer; a type with no rows answers ``fig`` None and a note that says so."""
+    from RevenueChaser.core import ownership
+    from RevenueChaser.module_sec_13f.report import build_type_fig
+    labels = dict(ownership.SEC13F_TYPES)
+    t = (tag or "").strip().lower()
+    if t not in labels:
+        return jsonify({"ok": False, "error": "unknown investor type"}), 404
+    fig, note = build_type_fig(labels[t], ownership.sec13f_type_holdings(t), ownership.sec13f_open_periods())
+    return jsonify({"ok": True, "tag": t, "label": labels[t], "fig": fig, "note": note})
+
+
 @app.route("/api/watchlist/<kind>/toggle/<ticker>", methods=["POST"])
 def api_watchlist_kind_toggle(kind: str, ticker: str):
     """Put ``ticker`` on the ``option`` or ``stock`` watch list, or take it off (PR 4, D2). The board that sent the

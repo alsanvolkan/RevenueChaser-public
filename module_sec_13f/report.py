@@ -80,6 +80,19 @@ body{background:var(--bg);color:var(--fg);font-family:var(--font-sans);padding:v
 .board-search input{background:var(--input-bg);color:var(--fg);border:1px solid var(--input-border);padding:0 12px;
   height:36px;border-radius:var(--r-sm);font:inherit;font-size:var(--fs-sm);width:260px;max-width:100%}
 .board-search input:focus{outline:2px solid var(--focus);outline-offset:1px;border-color:var(--focus)}
+details.types{background:var(--card);border:1px solid var(--border);border-radius:var(--r-md);margin:0 0 12px}
+details.types>summary{cursor:pointer;min-height:var(--touch);display:flex;align-items:center;padding:0 var(--sp-4);
+  color:var(--fg);font-weight:600;font-size:var(--fs-base);list-style-position:inside}
+details.types>summary:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.types-body{padding:0 var(--sp-4) var(--sp-4)}
+.types-pick{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;margin-bottom:var(--sp-2)}
+.types-pick label{color:var(--muted);font-size:var(--fs-sm)}
+.types-pick select{background:var(--input-bg);color:var(--fg);border:1px solid var(--input-border);
+  border-radius:var(--r-sm);font:inherit;font-size:var(--fs-sm);height:var(--touch);padding:0 10px;min-width:200px;
+  max-width:100%}
+.types-pick select:focus{outline:2px solid var(--focus);outline-offset:1px}
+#type-note{color:var(--muted);font-size:var(--fs-sm);line-height:var(--lh-body);margin-top:var(--sp-2)}
+#type-chart{width:100%;min-height:360px}
 .kit-count{color:var(--muted);font-size:var(--fs-sm);margin:8px 0 12px;min-height:1.2em}
 .kit-hide{display:none}
 table{width:100%;border-collapse:collapse;font-size:12px;background:var(--card);border:1px solid var(--border);
@@ -404,6 +417,29 @@ function openChart(ticker){
     .catch(function(){ chart.innerHTML = '<div class="empty neg">Failed to load chart.</div>'; });
 }
 function closeModal(){ document.getElementById('modal').classList.remove('open'); }
+// Top holdings by investor type (#760): the type's stacked shares per quarter, loaded when the section is opened
+// and again when the type changes. The pick is remembered in this browser only, if storage allows.
+var TYPE_KEY = 'rc.sec13f.type', TYPE_SEQ = 0;
+function loadType(tag){
+  var host = document.getElementById('type-chart'), note = document.getElementById('type-note'), seq = ++TYPE_SEQ;
+  try { localStorage.setItem(TYPE_KEY, tag); } catch(e) {}
+  note.textContent = '';
+  // Purged before the spinner replaces it: Plotly.react on a host whose nodes were wiped draws nothing.
+  Plotly.purge(host);
+  host.innerHTML = '<span class="spin"></span>';
+  fetch('/api/sec_13f/types/' + encodeURIComponent(tag))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(seq !== TYPE_SEQ){ return; }           // a later pick is on its way: this answer is stale
+      host.innerHTML = '';
+      note.textContent = d.note || d.error || '';
+      if(d.fig){ Plotly.newPlot(host, themedFig(d.fig).data, d.fig.layout, {displayModeBar: false, responsive: true}); }
+    })
+    .catch(function(){
+      if(seq !== TYPE_SEQ){ return; }
+      host.innerHTML = ''; note.textContent = 'The investor-type chart could not be loaded.';
+    });
+}
 function applyFilters(){
   closeDetails();
   var kitOn = !!(RCF && RCF.active()), q = SEARCH_Q.toLowerCase();
@@ -534,6 +570,15 @@ function fail(e){
 }
 function loadRows(){ rcPayload("module_sec_13f").then(build).catch(fail); }
 document.addEventListener('DOMContentLoaded', function(){
+  var types = document.getElementById('types'), pick = document.getElementById('type-pick');
+  if(types && pick){
+    try {
+      var saved = localStorage.getItem(TYPE_KEY);
+      if(saved && Array.prototype.some.call(pick.options, function(o){ return o.value === saved && !o.disabled; })){ pick.value = saved; }
+    } catch(e) {}
+    types.addEventListener('toggle', function(){ if(types.open && !types.dataset.loaded){ types.dataset.loaded = '1'; loadType(pick.value); } });
+    pick.addEventListener('change', function(){ loadType(pick.value); });
+  }
   var q = document.getElementById('board-q');
   if(q){
     q.addEventListener('input', function(e){ SEARCH_Q = e.target.value; applyFilters(); });
@@ -776,6 +821,53 @@ def build_chart_fig(ticker: str, periods: dict, enrichment: dict = None) -> dict
     return fig.to_dict()
 
 
+TYPE_SERIES = 6          # the categorical ramp has six hues (``--c1``..``--c6``); a seventh name is "Other"
+OTHER_LABEL = "Other"
+
+
+def build_type_fig(label: str, rows: list[dict], still_arriving=frozenset()) -> tuple[dict | None, str]:
+    """``(figure, note)`` for one investor type (#760): a stacked area of each quarter's share (%) of the type's 13F
+    portfolio, for the ``TYPE_SERIES`` tickers with the largest share in the newest quarter (then in any quarter,
+    when the newest names fewer), and every other name as "Other", so each quarter adds up to 100. A ticker outside
+    the type's stored top (``TYPE_TOP``) in a quarter is part of that quarter's rest, so it draws 0 there. The
+    colour follows the ticker (the ramp in the order the names are ranked), never its place in one quarter. A
+    quarter ``still_arriving`` carries the board's mark and the note names it. None when the type has no rows."""
+    import plotly.graph_objects as go
+    qs = sorted({r["period"] for r in rows})
+    if not qs:
+        return None, f"No 13F filer of type {label} in the store yet."
+    share: dict[str, dict[str, float]] = {}
+    for r in rows:
+        if r.get("ticker"):
+            share.setdefault(r["ticker"], {})[r["period"]] = float(r.get("share") or 0)
+    newest = qs[-1]
+    names = sorted(share, key=lambda t: (-share[t].get(newest, 0.0), -max(share[t].values()), t))[:TYPE_SERIES]
+    labels = [_qlabel(q) + (ARRIVING_MARK if q in still_arriving else "") for q in qs]
+    fig = go.Figure()
+    for i, t in enumerate(names):
+        fig.add_trace(go.Scatter(x=labels, y=[share[t].get(q, 0.0) for q in qs], name=t, mode="lines",
+                                 stackgroup="one", line=dict(width=1.5, color=THEME_SCALE[f"c{i + 1}"]),
+                                 hovertemplate=f"{t}: %{{y:.1f}}%<extra></extra>"))
+    rest = [max(100.0 - sum(share[t].get(q, 0.0) for t in names), 0.0) for q in qs]
+    fig.add_trace(go.Scatter(x=labels, y=rest, name=OTHER_LABEL, mode="lines", stackgroup="one",
+                             line=dict(width=1, color="rgba(128,128,128,0.55)"), fillcolor="rgba(128,128,128,0.22)",
+                             hovertemplate=f"{OTHER_LABEL}: %{{y:.1f}}%<extra></extra>"))
+    # The legend sits under the plot: seven names wrap on a phone, and above it they would cover the plot.
+    fig.update_layout(height=400, hovermode="x unified", showlegend=True,
+                      legend=dict(orientation="h", y=-0.22, yanchor="top", x=0),
+                      margin=dict(l=48, r=16, t=16, b=40))
+    fig.update_xaxes(type="category", tickangle=-40, automargin=True)
+    fig.update_yaxes(range=[0, 100], ticksuffix="%", nticks=6)
+    last = next((r for r in rows if r["period"] == newest), {})
+    filers, value, snap = last.get("type_filers"), last.get("type_value"), last.get("snapshot_date")
+    note = (f"{label}: {filers or 0:,} filers, {_fmt_money(value)} in mapped stocks in {_qlabel(newest)}. "
+            "Share of the type's 13F portfolio per quarter; names outside its top ten that quarter are in Other."
+            + (f" Types are Unusual Whales' institution tags as of {snap}, applied to every quarter." if snap else "")
+            + (f" {ARRIVING_MARK} {', '.join(_qlabel(q) for q in sorted(still_arriving))}: still arriving, filed "
+               "so far." if still_arriving else ""))
+    return fig.to_dict(), note
+
+
 #: The snapshot columns the table keeps (avo 12 Nov 2026: the board must fit his 1187 px laptop with no sideways
 #: scroll). The other snapshot values ride the payload as before and are shown in the row's detail panel.
 _TABLE_SNAP = ("value", "pct_out", "netflow", "streak")
@@ -988,6 +1080,28 @@ def render_sec13f_dashboard(totals: dict, meta: dict, enrichment: dict = None,
                         arriving(totals, quarters), quarter_status(totals, quarters))
 
 
+DEFAULT_TYPE = "value_investor"     # the owner's example (12 Nov 2026: UW's "Value / Energy Investors" chart)
+
+
+def types_section_html(filers: dict[str, int] | None = None) -> str:
+    """The collapsed "Top holdings by investor type" section (#760): a type picker and the chart host. The chart is
+    fetched from ``/api/sec_13f/types/<tag>`` when the section is opened, so a closed section costs nothing. Each
+    option carries its type's filers in the newest quarter (``filers``; owner's pick of 13 Nov 2026), and a type with
+    none is shown disabled; with no counts at all (a store that cannot say) the options are bare."""
+    from RevenueChaser.core.ownership import SEC13F_TYPES
+
+    def option(tag: str, label: str) -> str:
+        n = (filers or {}).get(tag, 0) if filers else None
+        text = label if n is None else f"{label} ({n:,})"
+        state = " disabled" if n == 0 else (" selected" if tag == DEFAULT_TYPE else "")
+        return f'<option value="{esc(tag)}"{state}>{esc(text)}</option>'
+    options = "".join(option(tag, label) for tag, label in SEC13F_TYPES)
+    return ('<details class="types" id="types"><summary>Top holdings by investor type</summary>'
+            '<div class="types-body"><div class="types-pick"><label for="type-pick">Investor type</label>'
+            f'<select id="type-pick">{options}</select></div>'
+            '<div id="type-chart"></div><div id="type-note" aria-live="polite"></div></div></details>')
+
+
 def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | None = None,
                  provider_health: dict | None = None, notice: str | None = None,
                  still_arriving: set[str] | frozenset[str] = frozenset(),
@@ -1046,6 +1160,8 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
                        "spine show as <b>Unclassified</b> with no market cap, so any cap filter hides them."})
     meta_js = f"<script>var META = {script_json(kit_meta)};</script>"
 
+    from RevenueChaser.core.ownership import sec13f_type_filers
+    types_html = types_section_html(sec13f_type_filers())
     status_html = ("<div class=\"status\">" + "".join(f'<span class="{esc(c)}">{esc(t)}</span>' for c, t in status)
                    + "</div>") if status else ""
 
@@ -1080,6 +1196,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 {recorded_sessions_html("module_sec_13f")}
 {filters_bar_html("rc-filters")}
 <div class="kit-count" id="kit-count" aria-live="polite"></div>
+{types_html}
 <div class="board-search"><input type="search" id="board-q" placeholder="Search ticker or name" autocomplete="off" spellcheck="false"></div>
 <table><thead>{header}</thead><tbody id="rows">{rows_html}</tbody></table>
 <div class="legend-note">
