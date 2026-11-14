@@ -66,7 +66,9 @@ def test_a_sentence_share_reaches_the_second_relation_of_the_same_company():
 def test_a_display_only_other_edge_still_loses_to_the_profile():
     """``other`` states no relation (``mentions``: no relation verb near the name), so a profile naming that company
     in any relation already says more and the ``other`` row is dropped, as it was before #725."""
-    text = "Direct sales to Apple accounted for 29.8% of our net sales."
+    # A company the filing names without any relation verb: since #729 an ``other`` mention of a company the
+    # filing *does* state a relation for is dropped before the merge, so the one left to test is this one.
+    text = "Our revenue grew. Apple is named here without a verb."
     regex = engine.filing_edges("AMKR", text, "2026-02-01")
     assert ("AAPL", "other") in _by_key(regex)               # the keyword window really emits it
 
