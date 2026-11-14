@@ -64,6 +64,20 @@ def test_a_later_fetch_the_same_day_replaces_the_day_so_a_revision_is_kept(http_
     assert len(list(econ.day_dir(date(2026, 11, 9)).glob("*.json.gz"))) >= 1
 
 
+def test_a_later_fetch_that_dropped_an_event_is_served_and_not_refused_by_the_shrink_guard(http_mock):
+    """RC-Build on homesrv failed every hour from 00:05 UTC on 14 Nov 2026: the calendar is a forward-looking window
+    and a day's partition is replaced whole by that day's newest fetch, so the day loses the events that rolled out
+    of UW's "this week and next" (114 rows against 126 live, -9.5 %). The swap's 1 % shrink guard refused that, and
+    with it the whole ``market`` build. ``economic_event`` is in ``serving.SHRINKS_BY_CHOICE`` since."""
+    http_mock.add("/market/economic-calendar", {"data": [CPI, FOMC]}, headers=UW_HEADERS)
+    _run(econ.NAME)
+    http_mock.routes.clear()
+    http_mock.add("/market/economic-calendar", {"data": [CPI]}, headers=UW_HEADERS)   # the minutes rolled out
+    row = _run(econ.NAME)
+    assert row["result"] == "changed" and row["rows"] == 1, row
+    assert [r["event"] for r in read.economic_calendar()] == ["CPI"], "the swap did not go through"
+
+
 def test_an_empty_or_failed_answer_is_a_failed_check_and_keeps_what_is_served(http_mock):
     http_mock.add("/market/economic-calendar", {"data": []}, headers=UW_HEADERS)
     assert _run(econ.NAME)["result"] == "failed"
