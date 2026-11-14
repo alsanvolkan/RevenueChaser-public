@@ -16,7 +16,7 @@ filing; or SEC stopped answering and the sync left tickers pending.
 from __future__ import annotations
 
 from RevenueChaser.core import history, ledger
-from RevenueChaser.module_value_chain import config, precision
+from RevenueChaser.module_value_chain import config, precision, splitter
 
 BOARD, TABLE = "module_value_chain", "value_chain_edges_history"
 # Bump when the extraction changes in a way the config hash does not see (``mentions``' relation patterns,
@@ -28,8 +28,15 @@ SELECTION_VERSION = "4"
 
 
 def effective_config() -> dict:
-    """The settings the filings are sliced and the edges extracted and gated with."""
+    """The settings the filings are sliced and the edges extracted and gated with.
+
+    ``SECTIONS_VERSION`` is the cut itself (``splitter.VERSION``, #847): moving it changes the text every edge
+    is read out of, which no other key here sees -- ``MAX_ITEM_CHARS`` does not, because a version that caps
+    nowhere ignores it. So a run before the pin moved and a run after it are told apart by the stored
+    ``model_version`` rather than looking identical.
+    """
     return {
+        "SECTIONS_VERSION": splitter.VERSION,
         "MIN_ITEM_CHARS": config.MIN_ITEM_CHARS, "MAX_ITEM_CHARS": config.MAX_ITEM_CHARS,
         "MENTION_WINDOW": config.MENTION_WINDOW, "MISS_RETRY_DAYS": config.MISS_RETRY_DAYS,
         "USE_SHARED_UNIVERSE": config.USE_SHARED_UNIVERSE, "MIN_PRECISION": precision.MIN_PRECISION,

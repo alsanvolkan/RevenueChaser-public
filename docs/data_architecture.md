@@ -2016,8 +2016,12 @@ and every row carries the version that wrote it. `ours-2` (#755, #756, pinned he
 carries its own 40-F rule: six start titles and ten stop titles instead of one each, a contents test and a body
 minimum in place of the cap, and a label (ok / overrun / missing) read through `cut_aif_business_q`. It was pinned
 before the first full cut, because moving the version re-cuts every company in one build and that pass is paid
-once. The Value Chain board (`module_value_chain/splitter.py`) and `filing_item` stay on `ours-1`: their tables
-carry no version column, so each moves on its own change.
+once. The Value Chain board (`module_value_chain/splitter.py`) pins the version `chain_filings` and `filing_item`
+are cut at; neither table carries a version column, so that pin moves on its own change, with its own re-slice.
+#847 moved it to `ours-2` as well, which is why the `capped` label and the `filing_item` CHECK that refuses `ok`
+at the cap now follow `filings.caps_text()` rather than being written in: `ours-2` caps nowhere, so a long and
+correct section is stored whole and `ok`. The stored rows were cut by `ours-1` until `reslice.apply` rewrites
+them, which rides the first full SEC cut as one run; `filing_item` is re-cut by the fundamentals build.
 
 **Needs.** `sec.whole`, `sec.business`, `sec.proxy` and `sec.note`, each with its own reader and `ask_required`
 (the text is gigabytes: nothing is answered unless a company is named). The three section needs share one table
