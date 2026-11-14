@@ -46,7 +46,8 @@ def test_tile_shows_the_below_minimum_state():
 # ── C19 ────────────────────────────────────────────────────────────────────
 def _reference_focal_graph(edges, ticker, depth=2, max_hop2=config.MAX_HOP2):
     """The pre-#118 ``focal_graph``, verbatim in behaviour: the oracle. A link also carries the edge's
-    ``share_pct`` (#387 D7), a copied field that the index does not change."""
+    ``share_pct`` (#387 D7), a copied field that the index does not change, and ``focal_relation``, the
+    relation seen from the focal company (#405): inverted on an incoming edge, the filing's own otherwise."""
     ticker = (ticker or "").upper()
     by_src: dict = {}
     for e in edges:
@@ -57,7 +58,10 @@ def _reference_focal_graph(edges, ticker, depth=2, max_hop2=config.MAX_HOP2):
     def _add(e, hop, incoming=False):
         links.append({"src": e["src"], "dst": e.get("dst_ticker") or e["dst_name"],
                       "dst_ticker": e.get("dst_ticker") or "",
-                      "relation": e["relation"], "snippet": e.get("snippet") or "",
+                      "relation": e["relation"],
+                      "focal_relation": (engine._INVERSE.get(e["relation"], e["relation"])
+                                         if incoming else e["relation"]),
+                      "snippet": e.get("snippet") or "",
                       "share_pct": e.get("share_pct"),
                       "hop": hop, "incoming": incoming})
 
