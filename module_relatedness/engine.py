@@ -34,7 +34,8 @@ MAX_TRANSIENT_FAILURES = 5   # stop a run after this many non-auth LLM failures
 class RunStopped(RuntimeError):
     """The profile run stopped early: ``peak`` (DeepSeek), ``allowance`` (SuperGrok, #388), ``auth``, ``transient``
     (repeated), ``request`` (Grok answered a 4xx: endpoint, model or parameter wrong), ``unusable`` (Grok's first
-    replies of a run were all unusable) or ``spine`` (no spine to name the companies from, #642 D3).
+    replies of a run were all unusable), ``spine`` (no spine to name the companies from, #642 D3) or ``forms`` (the
+    SEC form reader cannot serve the business text, #841).
 
     Written profiles stay durable; the caller reloads them from the store.
     """
@@ -68,15 +69,16 @@ def _save(path, data: dict) -> None:
 
 
 def _layer_documents(tickers: list[str]) -> dict[str, dict] | None:
-    """``{ticker: filing_item document row}``: the newest annual report text the fundamentals layer serves per
-    ticker (``sec/filings``, the same splitter and cap as Value Chain's corpus, so the same filing gives the same
-    text), or None off the layer (build plan PR 20, G6)."""
+    """``{ticker: filing_section business row}``: the business section of the newest annual report the SEC form
+    reader serves per ticker (``sec/forms``, ``read.form_business``; #841), or None off the layer (build plan PR 20,
+    G6). The row carries the cutter's label with its ``;suspect`` flags (#835) and the ``rules_version`` that cut
+    it; ``_forms_ready`` stops a run whose rows are not of ``config.FORMS_RULES_VERSION``."""
     from RevenueChaser.core import fundamentals_layer
     if not fundamentals_layer.reads_layer():
         return None
     from RevenueChaser.rcdata import read
     cik_of = {str(c["ticker"]).upper(): str(c["cik"]) for c in read.fundamental_companies(tickers) if c.get("cik")}
-    docs = {str(d["cik"]): d for d in read.filing_texts(set(cik_of.values()))}
+    docs = {str(d["cik"]): d for d in read.form_business(set(cik_of.values()))}
     return {t: docs[c] for t, c in cik_of.items() if c in docs}
 
 
@@ -123,71 +125,79 @@ def _doc_source(d: dict) -> dict:
             "filed": d.get("filing_date")}
 
 
-def _previous_filing(ticker: str) -> dict | None:
-    """``{text, source}`` of the business section of the annual report before the newest one, or None (#400 fallback).
-
-    Only the fundamentals layer can serve one (``filing_item`` keeps a document per served filing); ``chain_filings``
-    holds the newest filing only."""
-    from RevenueChaser.core import fundamentals_layer
-    if not fundamentals_layer.reads_layer():
-        return None
-    from RevenueChaser.rcdata import read
-    cik = _layer_cik(ticker)
-    docs = read.filing_documents(cik, "business") if cik else []
-    return {"text": docs[1].get("text") or "", "source": _doc_source(docs[1])} if len(docs) > 1 else None
-
-
 def _whole_document(ticker: str) -> dict | None:
-    """``{text, source}`` of the newest annual report's whole text (``filing_item`` item ``whole``), or None: the
-    last fallback (#400) when no business section is long enough. Layer only, as ``_previous_filing``."""
+    """``{text, source}`` of the newest annual report's whole text (``filing_section`` section ``whole``), or None:
+    the fallback (#400) when the business section cannot be profiled from. Layer only: ``chain_filings`` holds no
+    whole document."""
     from RevenueChaser.core import fundamentals_layer
     if not fundamentals_layer.reads_layer():
         return None
     from RevenueChaser.rcdata import read
     cik = _layer_cik(ticker)
-    d = read.filing_text(cik, "whole") if cik else None
+    d = next(iter(read.form_whole([cik])), None) if cik else None
     return {"text": d.get("text") or "", "source": _doc_source(d)} if d else None
 
 
 # The most of a fallback text a profile reads (review of PR #557): three chunks at most.
 MAX_FALLBACK_CHARS = 120_000
+# The cutter's labels that say the business section is in another document (``sec_sections`` ``ours-2``).
+NOT_IN_DOCUMENT = ("crossref",)
+
+
+def _unprofilable(quality) -> bool:
+    """True when the cutter says the business section is not in this document (``crossref``: the filing sends the
+    reader to another document by page reference, #841). Measured on the 5,131 stored annual reports, 13 Nov 2026:
+    42 such rows, their bodies empty or a page index (MCD, HSBC, VOD), so neither the text nor a locator call over
+    this document's headings can give the section."""
+    return str(quality or "").split(";", 1)[0] in NOT_IN_DOCUMENT
+
+
+def _capped(text: str) -> str:
+    """The business text a profile reads: its first ``config.MAX_BUSINESS_CHARS``, or all of it when that is None
+    (the owner's choice, 13 Nov 2026). ``ours-2`` stores the section uncut, so a cap is the reader's (#841);
+    applied before ``clean_input``, the order the fallback branch uses."""
+    cap = config.MAX_BUSINESS_CHARS
+    return (text or "") if cap is None else (text or "")[:cap]
 
 
 def _filing_input(ticker: str) -> dict:
-    """The text a profile is made from, with the fallback chain of #400: the newest filing's Item 1 / Item 4, else the
-    previous year's filing's, else the newest filing's whole document.
+    """The text a profile is made from, with the fallback chain of #400: the newest filing's Item 1 / Item 4, else
+    the newest filing's whole document.
 
-    ``{name, text, fallback, source, locate, hash_text}``; ``fallback`` is ``item``, ``previous_filing`` or
-    ``whole_document``, and when no link is long enough it is ``profiles.text_status`` of the newest Item
-    (``no_text`` / ``short_text``) with that text, so nothing is sent.
+    ``{name, text, fallback, source, locate, hash_text}``; ``fallback`` is ``item`` or ``whole_document``, and when
+    neither is long enough it is ``profiles.text_status`` of the newest Item (``no_text`` / ``short_text``) with
+    that text, so nothing is sent. The link to the previous year's filing is gone (#841): the form reader serves
+    the newest filing only, and ``filing_item`` never held a second business document either (4,993 rows over 4,993
+    companies, 13 Nov 2026), so the link was unreachable.
 
     ``locate`` (avo, 8 Nov 2026) is the whole document when the rule cut of the Item is ``overrun``, ``missing``,
     ``short`` or a suspect ``ok`` (``locator.asks``, #400 WP7) and the layer serves the document: ``_work`` then asks the writer where the section is, from its
     headings (``locator``), and keeps this text when it cannot say. Such a filing's ``hash_text`` is the whole
-    document, so the staleness hash does not depend on the locator's answer. No call is made here."""
+    document, so the staleness hash does not depend on the locator's answer. A ``crossref`` cut (``_unprofilable``)
+    is never profiled from its own text and never asks the locator: it reads the capped whole document. No call is
+    made here."""
     name, text = _filing_text(ticker)
+    quality = _filing_quality(ticker)
+    elsewhere = _unprofilable(quality)
     status = profiles_mod.text_status(text)
     whole = None
-    if status is not None or locator.asks(_filing_quality(ticker)):
+    if status is not None or elsewhere or locator.asks(quality):
         whole = _whole_document(ticker)
         if whole and profiles_mod.text_status(whole.get("text")) is not None:
             whole = None
     out = None
-    if status is None:
-        out = {"name": name, "text": clean_input(text), "fallback": "item", "source": _filing_source(ticker)}
-    else:
-        for label, link in (("previous_filing", _previous_filing), ("whole_document", lambda t: whole)):
-            got = link(ticker)
-            if got and profiles_mod.text_status(got.get("text")) is None:
-                # A whole 10-K runs to 1.4M characters (``filing_item`` item ``whole`` is uncut): the fallback reads
-                # its first MAX_FALLBACK_CHARS, which hold the business description, in a bounded number of calls.
-                out = {"name": name, "text": clean_input(got["text"][:MAX_FALLBACK_CHARS]), "fallback": label,
-                       "source": got.get("source")}
-                break
+    if status is None and not elsewhere:
+        out = {"name": name, "text": clean_input(_capped(text)), "fallback": "item",
+               "source": _filing_source(ticker)}
+    elif whole:
+        # A whole 10-K runs to 1.4M characters (``filing_section`` section ``whole`` is uncut): the fallback reads
+        # its first MAX_FALLBACK_CHARS, which hold the business description, in a bounded number of calls.
+        out = {"name": name, "text": clean_input(whole["text"][:MAX_FALLBACK_CHARS]), "fallback": "whole_document",
+               "source": whole.get("source")}
     if out is None:
-        out = {"name": name, "text": text, "fallback": status, "source": _filing_source(ticker)}
-    out["locate"] = whole
-    out["hash_text"] = "locator\n" + whole["text"] if whole else out["text"]
+        out = {"name": name, "text": text, "fallback": status or "short_text", "source": _filing_source(ticker)}
+    out["locate"] = None if elsewhere else whole
+    out["hash_text"] = "locator\n" + whole["text"] if out["locate"] else out["text"]
     return out
 
 
@@ -237,6 +247,23 @@ def filing_sentences(whole: str, item: str) -> list[str]:
     return out
 
 
+# The note blocks of the same filing the prompt is given beside the text (#841): the segment note beside the
+# segment lines (the lines are tag names turned into words, the note is the filer's prose), and the concentration
+# note beside the customer sentences a word search found (measured 12 Nov 2026: 803 reports carry it, 70 name a
+# listed company). Each is cut to MAX_NOTE_CHARS: a note's tables can run to tens of thousands of characters.
+NOTE_BLOCKS = (("segment_block", "SegmentReportingDisclosureTextBlock"),
+               ("concentration_block", "ConcentrationRiskDisclosureTextBlock"))
+MAX_NOTE_CHARS = 6_000
+
+
+def _note_block(cik: str, local_name: str) -> str:
+    """The text of the newest annual report's ``local_name`` note (``read.form_notes``), its parts joined in
+    document order and cut to ``MAX_NOTE_CHARS``; empty when the filing has none."""
+    from RevenueChaser.rcdata import read
+    parts = [str(r.get("text") or "").strip() for r in read.form_notes([cik], local_name=local_name)]
+    return "\n".join(p for p in parts if p)[:MAX_NOTE_CHARS].strip()
+
+
 def _filing_extras(cik: str | None, text: str) -> dict:
     """``filing_sentences`` and ``xbrl_customers`` of the company's newest annual report, for the prompt."""
     from RevenueChaser.core import fundamentals_layer
@@ -244,9 +271,20 @@ def _filing_extras(cik: str | None, text: str) -> dict:
         return {}
     from RevenueChaser.rcdata import read
     out: dict = {}
-    sents = filing_sentences((read.filing_text(cik, "whole") or {}).get("text") or "", text)
+    whole = next(iter(read.form_whole([cik])), None) or {}
+    sents = filing_sentences(whole.get("text") or "", text)
     if sents:
         out["filing_sentences"] = sents
+    for key, local_name in NOTE_BLOCKS:
+        # Each block on its own: a notes read that fails must not take the customer lines below with it, and
+        # ``_prepare`` drops the whole of this function's answer on an exception (review of PR #842, finding 7).
+        try:
+            block = _note_block(cik, local_name)
+        except Exception as exc:  # noqa: BLE001 - optional context, said aloud
+            logger.warning("relatedness: no %s for cik %s: %s", key, cik, exc)
+            continue
+        if block:
+            out[key] = block
     rows = read.customers(cik)
     newest = rows[0].get("period_end") if rows else None
     lines = [f"{r.get('customer')}: {r['share']:.1%} of {r.get('benchmark') or 'revenue'}"
@@ -324,7 +362,7 @@ def _prepare(rep: str, name: str | None, cik: str | None) -> dict:
     return inp
 
 
-FALLBACKS = ("item", "previous_filing", "whole_document")
+FALLBACKS = ("item", "whole_document")
 
 
 def _company_names(tickers: list[str]) -> dict[str, str]:
@@ -359,6 +397,33 @@ def _spine_ready() -> None:
         raise RunStopped("spine", None, why)
 
 
+def _forms_ready(tickers: list[str]) -> None:
+    """Stop a profile run (``RunStopped("forms")``) when the SEC form reader cannot serve its business text (#841):
+    no ``sec_forms.duckdb``, ``sec/forms`` never built, or business rows cut with another rule version than
+    ``config.FORMS_RULES_VERSION``.
+
+    Without the first two every company would read ``no_text``. Without the third the run would profile, and pay
+    for, a text the next build of ``sec/forms`` replaces: the input hash moves with the text, so that is a second
+    rewrite of the same companies. Off the layer (``chain_filings``) there is nothing to check."""
+    from RevenueChaser.core import fundamentals_layer
+    if not fundamentals_layer.reads_layer():
+        return
+    from RevenueChaser.rcdata import read
+    why = read.missing("sec_forms", "sec/forms")
+    if why is None and config.FORMS_RULES_VERSION:
+        ciks = {c for c in _cik_for(tickers).values() if c}
+        rows = read.form_business(ciks, text=False)
+        off = [r for r in rows if str(r.get("rules_version")) != config.FORMS_RULES_VERSION]
+        if off:
+            other = ", ".join(sorted({str(r.get("rules_version")) for r in off}))
+            first = ", ".join(sorted(str(r.get("cik")) for r in off)[:5])
+            why = (f"{len(off)} of {len(rows)} sec/forms business sections are cut with {other}, not "
+                   f"{config.FORMS_RULES_VERSION} (first CIKs: {first})")
+    if why is not None:
+        logger.warning("relatedness profile run stopped: %s", why)
+        raise RunStopped("forms", None, why)
+
+
 # How many tickers' filing texts ``_input_hashes`` holds at once (each is up to ~50 KB of prose).
 _HASH_CHUNK = 200
 # A stored partial profile's input hash carries this suffix, so the next run redoes it (within MAX_ATTEMPTS).
@@ -387,13 +452,14 @@ def _input_hashes(groups: dict[str, list[str]], names: dict[str, str]) -> dict[s
             rep = next((t for t in ts if (rows.get(t) or {}).get("item_text")), ts[0])
             text = (rows.get(rep) or {}).get("item_text") or ""
             name = names.get(rep) or rep
-            if profiles_mod.text_status(text) is not None or locator.asks((rows.get(rep) or {}).get("quality")):
+            quality = (rows.get(rep) or {}).get("quality")
+            if profiles_mod.text_status(text) is not None or _unprofilable(quality) or locator.asks(quality):
                 inp = _filing_input(rep)
                 if inp["fallback"] not in FALLBACKS and not inp.get("locate"):
                     continue
                 text = inp["hash_text"]
             else:
-                text = clean_input(text)          # what _filing_input sends
+                text = clean_input(_capped(text))          # what _filing_input sends
             out[key] = profiles_mod.input_hash(name, text)
     return out
 
@@ -455,6 +521,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
     profiles_mod.llm(provider)                 # an unknown writer fails here, before anything is written
     if use_llm:
         _spine_ready()                         # no spine, no names: stop before anything is written (#642 D3)
+        _forms_ready(tickers)                  # no business text of the right cut: stop as well (#841)
     grok_run = provider == "grok"
     free_run = provider != "deepseek"          # EVREN and Grok (#360): no fee, a call count is the only cap
     w_model, w_thinking, w_effort = _writer(provider)

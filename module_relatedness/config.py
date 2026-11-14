@@ -29,7 +29,23 @@ MIN_INPUT_CHARS = vc_config.MIN_ITEM_CHARS
 # v3c (#717, avo "prompt degisikligini de yap" 11 Nov 2026): a customer or supplier also carries the listed
 # ``parent`` the text names and whether the text presents it as ``public``. Bumped before R1 on purpose: it makes
 # the 388 profiles of today stale (about $1), where the same change after R1 would restale ~4,750 (about $14).
-PROMPT_VERSION = "v3c"
+# v3d (#841): the business text comes from the SEC form reader (``sec/forms``), and the prompt is given the
+# filing's segment note and concentration note beside the text. Both blocks ride in the context, which is outside
+# the input hash, so without a bump they would reach only freshly profiled companies.
+PROMPT_VERSION = "v3d"
+
+# The most of a business section a profile reads (#841), or None for no cap. ``ours-2`` stores the section uncut
+# (p99 264,822 characters, max 488,947 on the 5,131 stored annual reports, 13 Nov 2026) and a profile is one call
+# per 60,000 characters. The owner's decision, 13 Nov 2026 ("maliyet onemli degil"): no cap, so no company's
+# section is cut; a full round is 8,366 first-attempt calls against 8,128 under the 200,000 cap ``ours-1`` stored
+# with (240,000 would have been 8,139 calls and cut 72 companies). The value is inside the hashed text: setting
+# one later restales every company over it.
+# Not the ``MAX_INPUT_CHARS`` v2 cut every text at (removed by v3, #400).
+MAX_BUSINESS_CHARS: int | None = None
+
+# The rule version the business sections must be cut with before a profile run reads them (``_forms_ready``,
+# #841). None turns the check off.
+FORMS_RULES_VERSION = "ours-2"
 
 # $ hard-stop: cap the number of LLM calls per run (~1.5x the expected spend).
 # The cap's cost per call, measured on deepseek-flash: the 10 Nov 2026 pilot wrote 400 names in 668 calls for about

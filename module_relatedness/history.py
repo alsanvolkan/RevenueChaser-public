@@ -48,7 +48,7 @@ def _problems(payload: dict, rows: list[dict]) -> list[str]:
     if payload.get("stopped_reason") == "allowance":
         out.append(f"the run stopped at the SuperGrok allowance; {payload.get('pending', 0)} tickers wait for the "
                    f"next run (allowance resets {payload.get('next_reset') or 'unknown'})")
-    if payload.get("stopped_reason") in ("auth", "transient", "request", "unusable", "spine"):
+    if payload.get("stopped_reason") in ("auth", "transient", "request", "unusable", "spine", "forms"):
         out.append(f"the run stopped early ({payload['stopped_reason']}); {payload.get('pending', 0)} tickers wait "
                    "for the next run")
     if not rows:
