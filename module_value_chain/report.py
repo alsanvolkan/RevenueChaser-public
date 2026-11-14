@@ -180,7 +180,8 @@ def render_value_chain_dashboard(payload: dict) -> str:
     payload = payload or {}
     filings = payload.get("filings") or []
     edges = payload.get("edges") or []
-    sync = _friendly(payload.get("as_of"))
+    # An empty store has no sync date; printing today read as "synced today" (#392).
+    sync = _friendly(payload.get("as_of")) or "no sync yet"
     informed = set()
     for e in edges:
         if e.get("relation") in ("supplier", "customer"):
@@ -291,7 +292,7 @@ function render(){
   if(!FOCAL){
     var none = '<div class="empty">' + (DATA.length
       ? "No companies match the current filters."
-      : "No companies with supplier / customer edges. Run <b>Fetch (EDGAR)</b> if filings are missing.") + "</div>";
+      : "No companies with supplier / customer edges. Fill the corpus from <b>Settings \u2192 Fetch 10-K sync</b>.") + "</div>";
     document.getElementById("sankey").innerHTML = none;
     document.getElementById("edges").innerHTML = none;
     document.getElementById("fmeta").innerHTML = "";

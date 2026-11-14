@@ -612,7 +612,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         rawstore.ensure_table("chain_mentions")
         edges = rawstore.get_all("chain_mentions")
         filings = _board_filings_rows()
-        return _board_payload(filings, edges, _stored_sync() or _now(), fetch)
+        # No stored sync means nothing was ever synced: the header says so, rather than printing today (#392).
+        return _board_payload(filings, edges, _stored_sync() or "", fetch)
     info: dict = {}
     edges = build_edges(info)
     filings = _board_filings_rows()
@@ -653,7 +654,7 @@ def load_payload() -> dict:
     """Board payload from the store (zero network)."""
     filings = _board_filings_rows()
     edges = rawstore.get_all("chain_mentions")
-    return _board_payload(filings, edges, _stored_sync() or _now(), None)
+    return _board_payload(filings, edges, _stored_sync() or "", None)      # never today when nothing synced (#392)
 
 
 def _norm(edges: list[dict]) -> dict[str, list[dict]]:
