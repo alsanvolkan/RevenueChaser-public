@@ -35,6 +35,7 @@ from RevenueChaser.core.taxonomy import assign_themes
 from RevenueChaser.core.scan_quality import ohlc_drop_reason
 
 from . import config
+from . import debt as _debt
 from . import events
 from .screeners import evaluate_momentum, evaluate_quality, evaluate_rule_of_40, is_distorted
 
@@ -331,13 +332,24 @@ _QUALITY_FLOWS = ("revenue", "gross_profit", "cost_of_revenue", "ebit", "depreci
 _QUALITY_BALANCE = ("total_debt", "cash", "short_term_investments", "total_equity")
 
 
-def _quality_of(a: dict) -> dict:
-    """ROIC, gross margin and net debt / EBITDA of one record (a fiscal year, or a trailing year)."""
+def _quality_of(a: dict, debt_free: bool = False) -> dict:
+    """ROIC, gross margin and net debt / EBITDA of one record (a fiscal year, or a trailing year).
+
+    ``debt_free`` is the caller's answer to #737 (``module_fundamentals.debt``): this record tags no debt line at
+    all and reports no positive interest expense, so the total debt the facts leave NULL is read as 0 here. The
+    reading is kept apart from a filed figure in ``debt_basis`` (``filed`` / ``inferred_none`` / None). The rules
+    that rest on it carry a note on their label, which the Q modal shows, and the basis itself rides in the board
+    payload, so an inferred zero is never presented as the filer's own.
+    """
     out = {"gross_margin": None, "roic": None, "net_debt_ebitda": None, "net_cash": None,
-           "net_income": None, "total_equity": None}
+           "net_income": None, "total_equity": None, "debt_basis": None}
     ebit = _to_float(a.get("ebit"))
     dep = _to_float(a.get("depreciation"))
     debt = _to_float(a.get("total_debt"))
+    if debt is not None:
+        out["debt_basis"] = _debt.FILED
+    elif debt_free:
+        debt, out["debt_basis"] = 0.0, _debt.INFERRED_NONE
     cash = _to_float(a.get("cash"))
     eq = _to_float(a.get("total_equity"))
 
@@ -372,6 +384,29 @@ def _quality_ttm(annual: list[dict], quarterly: list[dict], i: int) -> dict | No
     return rec
 
 
+def _quarter_at(quarterly: list[dict], end: str | None) -> dict | None:
+    """The quarterly record whose period ends on ``end`` (the trailing year's balance-sheet quarter), or None."""
+    if not end:
+        return None
+    return next((q for q in quarterly if str(q.get("period"))[:10] == str(end)[:10]), None)
+
+
+def _quarters_after(quarterly: list[dict], year_end, upto=None) -> list[dict]:
+    """Every quarterly record ending after the anchor year end, up to and including ``upto`` (#737's guard).
+
+    **Every** one, not the newest: a filer that tagged a borrowing in Q1 and did not repeat it in Q2 has not said
+    it repaid, and after a press release the newest record is the preliminary one UW filled, which tags nothing at
+    all and would otherwise hide the 10-Q behind it (Fable review F2, 13 Nov 2026).
+    """
+    if not year_end:
+        return []
+    e0 = year_end.isoformat() if hasattr(year_end, "isoformat") else str(year_end)[:10]
+    out = [q for q in quarterly if str(q.get("period"))[:10] > e0]
+    if upto:
+        out = [q for q in out if str(q.get("period"))[:10] <= str(upto)[:10]]
+    return out
+
+
 def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) -> dict:
     """Quality's three figures and their basis (G6, build plan PR 13: Quality reads the quarter store).
 
@@ -383,12 +418,27 @@ def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) ->
     if i is None:
         return {**_quality_of({}), "quality_basis": None, "quality_period_end": None}
     a = annual[i]
-    fy = _quality_of(a)
     end = fiscal_year.period_end(a)
+    # #737. The year is counted debt-free only when its own balance sheet tags nothing and it paid no interest AND
+    # no quarter after it does either: the board shows one leverage figure per name, and a name whose later balance
+    # sheets carry notes is not debt-free on them, whatever the older year end said.
+    fy = _quality_of(a, debt_free=_debt.debt_free(a)
+                     and all(_debt.debt_free(q, quarterly=True)
+                             for q in _quarters_after(quarterly or [], end)))
     out = {**fy, "quality_basis": "FY", "quality_period_end": end.isoformat() if end else None}
     ttm_rec = _quality_ttm(annual, quarterly or [], i)
     if ttm_rec is not None:
-        ttm = _quality_of(ttm_rec)
+        # The same rule on the trailing year, read on the quarter its balance sheet comes from: the debt tags are a
+        # balance sheet's, so they are that quarter's and never the year's. The anchor year has to clear the rule
+        # too, and so does every quarter between the two. Measured 13 Nov 2026 on the real store: 7 of the 300
+        # inferred names tag debt on the annual record and nothing on the later quarter, EXPD
+        # (``ShortTermBankLoansAndNotesPayable`` 30.3 m) and IOVA (``NotesPayableCurrent`` 1.0 m) with a real
+        # borrowing. A filer that tagged debt at its year end is not a filer that tagged nothing, and a quarter
+        # that simply did not repeat the tag does not say it repaid.
+        q = _quarter_at(quarterly or [], ttm_rec["period"])
+        ttm = _quality_of(ttm_rec, debt_free=_debt.debt_free(q, quarterly=True) and _debt.debt_free(a)
+                          and all(_debt.debt_free(x, quarterly=True)
+                                  for x in _quarters_after(quarterly or [], end, ttm_rec["period"])))
         # The year's net income stays (P/E reads its own TTM, ``_ttm_metrics``); P/B reads the newest equity.
         if all(ttm[k] is not None or fy[k] is None for k in ("gross_margin", "roic", "net_debt_ebitda", "net_cash")):
             out = {**ttm, "net_income": fy["net_income"], "quality_basis": "TTM",
@@ -591,6 +641,8 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "roic": qual["roic"],
         "net_debt_ebitda": qual["net_debt_ebitda"],
         "net_cash": qual.get("net_cash"),
+        # #737: "filed" (the facts gave a total), "inferred_none" (no debt tag and no interest: read as 0) or None.
+        "debt_basis": qual.get("debt_basis"),
         "pe": pe,
         "pb": pb,
         "dist_52w_pct": ind.get("within_52w_high_pct"),
@@ -696,6 +748,9 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
             "quality_basis": r.get("quality_basis"), "quality_period_end": r.get("quality_period_end"),
             "statements": r.get("statements"),
             "pe": m.get("pe"), "pb": m.get("pb"), "roic": m.get("roic"),
+            # #737 (Fable review F3): the payload carries ``roic``, which an inferred zero can make known, so it
+            # carries the basis of that zero beside it.
+            "debt_basis": m.get("debt_basis"),
             "distorted": distorted,
             "info_stale": bool(r.get("info_stale")),
             "gates": gates,
