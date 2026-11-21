@@ -55,7 +55,7 @@ SERVING_SCHEMA_VERSION = {"market": 5, "spine": 10, "ownership": 5}
 # PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
 SERVING_SCHEMA_VERSION["prices"] = 1
 # PR 12 (G5): ``fundamentals.duckdb``, the facts, filings, earnings, estimates and checks (``build/fundamentals/``).
-SERVING_SCHEMA_VERSION["fundamentals"] = 6
+SERVING_SCHEMA_VERSION["fundamentals"] = 7
 # fundamentals 2: ``earnings_reported``, the EPS a company reported as UW serves it, in a table of its own
 #                 (``build/fundamentals/uw_earnings.py``, avo's decision of 5 Nov 2026). Bumped before the kind's
 #                 first build, so no live file had to be checkpointed for it.
@@ -72,6 +72,12 @@ SERVING_SCHEMA_VERSION["fundamentals"] = 6
 # fundamentals 6: ``audit_flag``, one row per restatement, late-filing notice and director or officer change Audit
 #                 Analytics recorded for a company of ours (``wrds/audit``, #1181 step C). A history about two
 #                 months behind; every other table is built as before.
+# fundamentals 7: ``earnings_transcript``, the turns of each company's last reported earnings call
+#                 (``alphavantage/earnings_transcripts``, #1214), and ``earnings_report_history`` gains
+#                 ``fiscal_year`` and ``fiscal_quarter`` -- Compustat's ``fyearq`` and ``fqtr``, NULL on a UW row.
+#                 The label is the one Alpha Vantage asks a transcript by (measured 21 Nov 2026: its ``quarter``
+#                 is the company's fiscal quarter), and no date arithmetic produces it for an off-calendar fiscal
+#                 year. One bump for both, one whole fundamentals build. Every other table is built as before.
 # PR 18 (G8): ``options.duckdb``, the option chains, exposures, prints and IV (``build/options/``).
 SERVING_SCHEMA_VERSION["options"] = 2
 # options 2: the calendar item's fields on ``option_screener_daily`` (and the screener's ``realized_volatility``,

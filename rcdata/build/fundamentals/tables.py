@@ -14,8 +14,8 @@ from ....core import calendar
 from ... import ops
 from .. import base
 from .. import dirty as dirty_set
-from . import (KIND, common, companyfacts, earnings, estimates, facts, filings, fsds, uw_earnings,
-               wrds_fund)
+from . import (KIND, common, companyfacts, earnings, estimates, facts, filings, fsds, transcripts,
+               uw_earnings, wrds_fund)
 
 NAME = "fundamentals/tables"
 
@@ -68,9 +68,24 @@ EARNINGS_REPORTED = [("cik", "TEXT NOT NULL"), ("ticker", "TEXT"), ("period_end"
 # ``source`` says which on every row, and ``gvkey`` is the Compustat company the date came from (NULL on a UW row).
 # Measured on homesrv, 20 Nov 2026 (#1181): the two agree to the day on 92.5% of 128,710 matched quarters, and
 # ``rdq`` is empty on 9.12% of the linked companies' quarters.
+# ``fiscal_year`` and ``fiscal_quarter`` are Compustat's ``fyearq`` and ``fqtr``: the company's own label for the
+# quarter, NULL on a UW row (UW serves period ends, not fiscal labels). They are here because Alpha Vantage asks
+# for an earnings call **by fiscal quarter** (``YYYYQn``, measured 21 Nov 2026, #1214) and no date arithmetic can
+# produce that label for a company whose fiscal year does not end in December.
 EARNINGS_REPORT_HISTORY = [("cik", "TEXT NOT NULL"), ("period_end", "DATE NOT NULL"),
                            ("report_date", "DATE NOT NULL"), ("gvkey", "TEXT"), ("source", "TEXT NOT NULL"),
-                           ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+                           ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT"),
+                           ("fiscal_year", "INTEGER"), ("fiscal_quarter", "INTEGER")]
+
+# One row per turn of an earnings call, in the order spoken (``alphavantage/earnings_transcripts``, #1214). The
+# provider sends no prepared-remarks / Q&A field, so the halves are not stored apart: the first analyst turn is
+# the boundary and the reader's caller splits there
+# (``module_earnings_radar/rules/transcript_split.py``). ``provider_sentiment`` is the provider's own per-turn
+# number, kept as it came and read by nothing: R8 measures Loughran-McDonald rates over our own tokenizer.
+EARNINGS_TRANSCRIPT = [("ticker", "TEXT NOT NULL"), ("quarter", "TEXT NOT NULL"), ("seq", "INTEGER NOT NULL"),
+                       ("speaker", "TEXT"), ("title", "TEXT"), ("content", "TEXT"),
+                       ("provider_sentiment", "DOUBLE"), ("source", "TEXT NOT NULL"), ("source_as_of", "DATE"),
+                       ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
 # One row per event Audit Analytics recorded for a company of ours (``wrds/audit``, #1181 step C): a financial
 # restatement, a late-filing notice (the NT forms) or a director's or officer's change. ``kind`` says which,
@@ -127,6 +142,7 @@ SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "earnings_event": EARNINGS_EVENT,
     "earnings_reported": EARNINGS_REPORTED,
     "earnings_report_history": EARNINGS_REPORT_HISTORY,
+    "earnings_transcript": EARNINGS_TRANSCRIPT,
     "audit_flag": AUDIT_FLAG,
     "fundamental_revision": REVISION,
     "segment_revenue": SEGMENT_REVENUE,
@@ -155,6 +171,7 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     companyfacts.STAGING["company"]: facts.COMPANY,
     filings.STAGING["filings"]: filings.FILING,
     earnings.STAGING: earnings.SCHEMA,
+    transcripts.STAGING: transcripts.SCHEMA,
     **{d.revision_staging: wrds_fund.REVISION for d in wrds_fund.DATASETS if d.revisions},
     wrds_fund.FUNDQ.staging: wrds_fund.FUNDQ.schema + wrds_fund.PROVENANCE,
     uw_earnings.STAGING: uw_earnings.SCHEMA,
@@ -370,19 +387,39 @@ def _report_history(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
         INSERT INTO earnings_report_history
         WITH w AS (
             SELECT c.cik, s.datadate AS period_end, s.rdq AS report_date, s.gvkey,
-                   '{wrds_fund.FUNDQ.name}' AS source, s.source_as_of, s.fetched_at, s.run_id
+                   '{wrds_fund.FUNDQ.name}' AS source, s.source_as_of, s.fetched_at, s.run_id,
+                   s.fyearq AS fiscal_year, s.fqtr AS fiscal_quarter
             FROM {wrds_fund.FUNDQ.staging} s JOIN {wrds_fund._links()} c ON c.gvkey = s.gvkey
             WHERE s.rdq IS NOT NULL AND s.datadate IS NOT NULL
             QUALIFY row_number() OVER (PARTITION BY c.cik, s.datadate ORDER BY s.rdq, s.gvkey) = 1)
         SELECT * FROM w
         UNION ALL
-        SELECT u.cik, u.period_end, u.report_date, NULL, u.source, u.source_as_of, u.fetched_at, u.run_id
+        SELECT u.cik, u.period_end, u.report_date, NULL, u.source, u.source_as_of, u.fetched_at, u.run_id,
+               NULL::INTEGER, NULL::INTEGER
         FROM {uw_earnings.STAGING} u
         WHERE u.cik IN (SELECT cik FROM fundamental_company) AND u.report_date IS NOT NULL
           AND u.period_end IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM w WHERE w.cik = u.cik AND abs(date_diff('day', w.period_end, u.period_end))
                           <= {wrds_fund.PERIOD_DAYS})""")
     return common.count(con, "earnings_report_history")
+
+
+def _transcripts(con: duckdb.DuckDBPyConnection) -> int:
+    """``earnings_transcript``: every stored earnings-call turn, in the order spoken.
+
+    Keyed by ticker and quarter rather than by company, so this one is not cleared per dirty CIK: the staging
+    holds every call on disk and the table is made again whole from it. One (ticker, quarter) answered twice --
+    a re-fetch of a call the provider revised -- keeps the newer fetch, turn by turn.
+    """
+    con.execute("DELETE FROM earnings_transcript")
+    con.execute(f"""
+        INSERT INTO earnings_transcript
+        SELECT ticker, quarter, seq, speaker, title, content, provider_sentiment,
+               '{transcripts.NAME}' AS source, source_as_of, fetched_at, run_id
+        FROM {transcripts.STAGING}
+        WHERE ticker IS NOT NULL AND quarter IS NOT NULL AND seq IS NOT NULL
+        QUALIFY row_number() OVER (PARTITION BY ticker, quarter, seq ORDER BY fetched_at DESC) = 1""")
+    return common.count(con, "earnings_transcript")
 
 
 def _audit_flags(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
@@ -698,6 +735,7 @@ class FundamentalsTables:
         counts["earnings_event"] = _earnings(con, ciks)
         counts["earnings_reported"] = _earnings_reported(con, ciks)
         counts["earnings_report_history"] = _report_history(con, ciks)
+        counts["earnings_transcript"] = _transcripts(con)
         counts["audit_flag"] = _audit_flags(con, ciks)
         counts["fundamental_revision"] = _revisions(con, ciks)
         counts["segment_revenue"] = _segments(con, ciks)

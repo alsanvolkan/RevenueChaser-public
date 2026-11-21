@@ -203,6 +203,13 @@ _NEEDS = (
     # Audit Analytics' restatements, late filings and officer changes (#1181 step C). The feeds end about two
     # months before the monthly pull, so the newest row is up to a quarter old by design: 95, as the two above.
     Need("fundamentals.audit_flags", "audit_flags", "audit_flag", "file_date", "cik", 95, providers=("wrds",)),
+    # The words spoken on the last reported earnings call (#1214). The table carries no call date -- the provider
+    # sends a fiscal quarter label and no date -- so the day is the fetch day, and the bound is a quarter and a
+    # month: a company reports every quarter, so nothing fetched for one in 120 days means the stored call is no
+    # longer its latest. ``ask_required`` because the text is tens of KB a call.
+    Need("earnings.transcript", "earnings_transcript", "earnings_transcript", "source_as_of", "ticker", 120,
+         max_lag_unit=DAYS, ask_param="tickers", ask_required=True, normalize=TICKER,
+         providers=("alphavantage",)),
     Need("fundamentals.filings", "filing_items", "filing_item", "filing_date", "cik", 1,
          ask_param="ciks", providers=("sec",)),
     Need("fundamentals.segments", "segments", "segment_revenue", "period_end", "cik", 65,

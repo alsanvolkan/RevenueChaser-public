@@ -1214,11 +1214,13 @@ DATASET_OF_TABLE.update({"fundamental_company": "fundamentals/tables", "fundamen
                          "filing_item": "sec/filings", "segment_revenue": None, "customer_share": None,
                          "peer_group": "fundamentals/tables", "fundamental_revision": None,
                          "earnings_reported": "uw/earnings", "earnings_report_history": None,
+                         "earnings_transcript": "alphavantage/earnings_transcripts",
                          "audit_flag": "wrds/audit"})
 KIND_OF_TABLE.update({t: "fundamentals" for t in ("fundamental_company", "fundamental_fact", "earnings_event", "estimate_latest",
                                                   "filing_item", "segment_revenue", "customer_share", "peer_group",
                                                   "fundamental_revision", "earnings_reported",
-                                                  "earnings_report_history", "audit_flag")})
+                                                  "earnings_report_history", "earnings_transcript",
+                                                  "audit_flag")})
 
 
 def _cik(cik) -> str:
@@ -1295,6 +1297,40 @@ def earnings_reported(cik=None) -> list[dict]:
         sql += " AND cik = ?"
         params.append(str(cik))
     return _rows("earnings_reported", sql + " ORDER BY cik, period_end", params, missing_table_ok=True)
+
+
+def earnings_transcript(tickers: Iterable = (), quarter: str | None = None, text: bool = True) -> list[dict]:
+    """The turns of an earnings call (``earnings.transcript``), in the order spoken.
+
+    One company's newest stored quarter unless ``quarter`` names one (``YYYYQn``, the company's **fiscal**
+    quarter, which is how the provider labels a call). ``text=False`` leaves the words out, for a caller that only
+    wants to know which calls are held and how long they are.
+
+    The turns are **not** split into prepared remarks and Q&A, because the provider sends no such field: the first
+    analyst turn is the boundary, and splitting there is the caller's step
+    (``module_earnings_radar.rules.transcript_split``). A caller that scores a report **before** it is published
+    must check the quarter against the one it is scoring: the newest stored call is the last **reported**
+    quarter's, which is the only call that exists.
+    """
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    if not wanted:
+        return []
+    cols = "*" if text else "* EXCLUDE (content)"
+    marks = ", ".join("?" * len(wanted))
+    params: list = list(wanted)
+    if quarter is not None:
+        sql = (f"SELECT {cols} FROM earnings_transcript WHERE ticker IN ({marks}) AND quarter = ? "
+               "ORDER BY ticker, seq")
+        params.append(str(quarter).strip().upper())
+    else:
+        # The newest quarter per company is the newest ``source_as_of``, not the highest label: a company that
+        # changed its fiscal year can hold a lower label for a later call.
+        sql = (f"WITH newest AS (SELECT ticker, quarter FROM earnings_transcript WHERE ticker IN ({marks}) "
+               "QUALIFY dense_rank() OVER (PARTITION BY ticker ORDER BY source_as_of DESC, quarter DESC) = 1) "
+               f"SELECT {cols} FROM earnings_transcript SEMI JOIN newest USING (ticker, quarter) "
+               f"WHERE ticker IN ({marks}) ORDER BY ticker, seq")
+        params = params * 2
+    return _rows("earnings_transcript", sql, params, missing_table_ok=True)
 
 
 def earnings_report_history(cik=None, start=None, end=None) -> list[dict]:

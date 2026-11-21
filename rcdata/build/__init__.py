@@ -52,6 +52,7 @@ from .fundamentals import estimates as fundamentals_estimates  # noqa: E402
 from .fundamentals import filings as fundamentals_filings  # noqa: E402
 from .fundamentals import fsds as fundamentals_fsds  # noqa: E402
 from .fundamentals import tables as fundamentals_tables  # noqa: E402
+from .fundamentals import transcripts as fundamentals_transcripts  # noqa: E402
 from .fundamentals import uw_earnings as fundamentals_uw_earnings  # noqa: E402
 from .fundamentals import wrds_fund as fundamentals_wrds  # noqa: E402
 from .fundamentals import fx_rates as fundamentals_fx  # noqa: E402
@@ -59,6 +60,7 @@ from .fundamentals import fx_rates as fundamentals_fx  # noqa: E402
 DATASETS.update({d.name: d for d in (fundamentals_companyfacts.DATASET, fundamentals_filings.DATASET,
                                      fundamentals_earnings.DATASET, fundamentals_uw_earnings.DATASET,
                                      fundamentals_estimates.DATASET, fundamentals_fx.DATASET, fundamentals_fsds.DATASET,
+                                     fundamentals_transcripts.DATASET,
                                      *fundamentals_wrds.DATASETS,
                                      fundamentals_tables.DATASET)})
 
